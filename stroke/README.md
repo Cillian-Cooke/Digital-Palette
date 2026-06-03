@@ -3,16 +3,19 @@
 Draw mouse strokes, shape them into animations, and export a real **Rive**
 (`.riv`) file — all in a single, dependency-free HTML page.
 
-![timeline + node graph + canvas](https://img.shields.io/badge/runtime-no%20build%2C%20no%20deps-6ad1ff)
+![timeline + speed editor + canvas](https://img.shields.io/badge/runtime-no%20build%2C%20no%20deps-6ad1ff)
 
 ## What it does
 
 - **Draw** on the canvas; each stroke is RDP-simplified and fit to a smooth
   poly-bézier (Schneider).
-- **Shape the fade** in the node graph (opacity over time) — drag nodes,
-  double-click to add/remove.
-- **Animate** with a draw-on (trim) reveal, per-node opacity, and an optional
-  drift (a stroke moves from a start to an end position).
+- **Shape the speed** in the animation-speed editor — pick a curvature preset
+  (linear, ease in/out, exponential…) or paste in your own `cubic-bezier(…)`,
+  and copy a stroke's easing back out.
+- **Set transparency** once for the whole animation with the global opacity
+  slider (applies to the preview and the export).
+- **Animate** with a draw-on (trim) reveal shaped by the easing curve, plus an
+  optional drift (a stroke moves from a start to an end position).
 - **Arrange** on a timeline: per-stroke start, draw duration, and a "hold"
   section that defaults to the end of the animation (the stroke then disappears).
 - **Move** strokes by dragging the body; set drift with a single arrow gizmo.

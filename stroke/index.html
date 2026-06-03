@@ -30,11 +30,22 @@
   #stats{position:absolute;bottom:8px;left:10px;color:var(--dim);z-index:5;pointer-events:none}
   #canvasHint{position:absolute;top:10px;left:12px;color:var(--dim);z-index:5;pointer-events:none}
 
-  /* Right rail: node graph · toolbar · groups */
+  /* Right rail: speed editor · toolbar · groups */
   #rightRail{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
-  #graphPanel{position:relative;flex:0 0 44%;min-height:170px;border-bottom:1px solid var(--line)}
-  #graph{position:absolute;inset:0;width:100%;height:100%}
-  #graphPanel .tag{position:absolute;top:8px;left:10px;color:var(--muted);z-index:2;pointer-events:none}
+  #graphPanel{flex:0 0 44%;min-height:200px;border-bottom:1px solid var(--line);
+    display:flex;flex-direction:column;gap:8px;padding:8px 10px;overflow-y:auto}
+  #graphPanel .tag{color:var(--muted);letter-spacing:.04em;flex:0 0 auto}
+  #easeCurve{width:100%;height:96px;flex:0 0 auto;background:#0b0b0d;
+    border:1px solid var(--line);border-radius:5px;display:block}
+  #easePresets{display:flex;flex-wrap:wrap;gap:5px}
+  #easePresets button{padding:4px 8px}
+  #easePresets button.on{border-color:var(--accent);color:#fff;background:#16242b}
+  #easeIO{display:flex;gap:6px;align-items:center}
+  #easeIO input{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:11px;color:var(--ink);
+    background:#15151a;border:1px solid var(--line2);border-radius:4px;padding:5px 8px}
+  #easeIO input:focus{outline:none;border-color:var(--accent)}
+  #easeIO button{flex:0 0 auto}
+  #easeHint{color:var(--dim);line-height:1.5}
 
   #toolbar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;
     padding:8px;border-bottom:1px solid var(--line);background:#0c0c0e}
@@ -83,8 +94,14 @@
     </div>
     <div id="rightRail">
       <div id="graphPanel">
-        <div class="tag">opacity / time · drag · dbl-click ±</div>
-        <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="tag">animation speed · curvature</div>
+        <svg id="easeCurve" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+        <div id="easePresets"></div>
+        <div id="easeIO">
+          <input id="easeText" type="text" spellcheck="false" autocomplete="off" title="paste a cubic-bezier(...) here">
+          <button id="easeCopy" title="copy this easing to clipboard">⧉ copy</button>
+        </div>
+        <div id="easeHint">curvature of the draw-on. presets above, or paste a cubic-bezier.</div>
       </div>
       <div id="toolbar">
         <button id="playBtn">▶ play</button>
@@ -97,10 +114,13 @@
         <button id="clearBtn">clear</button>
         <span class="sep"></span>
         <span class="ctl"><span class="label">width</span>
-          <input id="thickness" type="range" min="1" max="20" step="0.5" value="4">
+          <input id="thickness" type="range" min="1" max="120" step="0.5" value="4">
           <span id="thickVal" class="label">4.0</span></span>
         <span class="ctl"><span class="label">colour</span>
           <input id="colour" type="color" value="#ffffff"></span>
+        <span class="ctl" title="transparency across the whole animation"><span class="label">opacity</span>
+          <input id="globalOpacity" type="range" min="0" max="100" step="1" value="100">
+          <span id="opacityVal" class="label">100</span></span>
       </div>
       <div id="groupsPanel">
         <div class="ghead"><span>groups</span><span id="groupCount" class="gmeta"></span></div>
@@ -119,7 +139,7 @@
 "use strict";
 /* ============================================================================
    STROKE — draw mouse strokes, shape them into Rive animations, export .riv
-   Sections: 1 State · 2 Drawing · 3 Processing · 4 Canvas · 5 Node graph
+   Sections: 1 State · 2 Drawing · 3 Processing · 4 Canvas · 5 Speed editor
              6 Timeline · 7 Animation engine · 8 Rive exporter
    ========================================================================= */
 
@@ -134,9 +154,9 @@ const state = {
   playhead: 0,          // seconds
   drag: null,           // {kind, ...}
   recording: null,      // {raw:[{x,y,time}]}
-  hoverNode: -1,        // index into selected stroke's nodes
   canvas: { w: 0, h: 0 },
-  brush: { thickness: 4, colour: '#ffffff' },  // defaults for the next stroke
+  transparency: 1,      // global opacity applied across the whole animation (0..1)
+  brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1] },  // defaults for the next stroke
   tool: 'draw',         // 'draw' | 'box'
   groups: [],           // Group[] {id,name,hue,strokeIds:[],locked,hidden,collapsed}
   boxSel: null,         // live marquee {x0,y0,x1,y1}
@@ -154,7 +174,9 @@ function selected(){ return state.strokes.find(s => s.id === state.selectedId) |
 // element refs
 const canvas = document.getElementById('canvas');
 const overlay = document.getElementById('overlay');
-const graph = document.getElementById('graph');
+const easeCurve = document.getElementById('easeCurve');
+const easePresets = document.getElementById('easePresets');
+const easeText = document.getElementById('easeText');
 const tlSvg = document.getElementById('timelineSvg');
 const tlRuler = document.getElementById('tlRuler');
 const tlScroll = document.getElementById('tlScroll');
@@ -201,28 +223,49 @@ function centroid(stroke){
   let x=0,y=0; for(const p of pts){x+=p.x;y+=p.y;}
   return pts.length?{x:x/pts.length,y:y/pts.length}:{x:0,y:0};
 }
-function locateOnPath(segments, pt){
-  let best={segmentIndex:0,segmentT:0,d:Infinity}, per=22;
-  for(let s=0;s<segments.length;s++)
-    for(let i=0;i<=per;i++){
-      const t=i/per, q=cubicAt(segments[s],t);
-      const d=(q.x-pt.x)**2+(q.y-pt.y)**2;
-      if(d<best.d) best={segmentIndex:s,segmentT:t,d};
-    }
-  return {segmentIndex:best.segmentIndex,segmentT:best.segmentT};
-}
-function nodePathPos(stroke,node){
-  const si=Math.min(node.segmentIndex, stroke.segments.length-1);
-  return cubicAt(stroke.segments[si], node.segmentT);
-}
 function distToSeg(p,a,b){
   const dx=b.x-a.x, dy=b.y-a.y, l2=dx*dx+dy*dy;
   if(l2===0) return V.dist(p,a);
   let t=((p.x-a.x)*dx+(p.y-a.y)*dy)/l2; t=clamp(t,0,1);
   return V.dist(p,{x:a.x+dx*t,y:a.y+dy*t});
 }
-function nodeColor(i,n){ const f=n<=1?0:i/(n-1); return `hsl(${(202+f*186)%360} 85% 63%)`; }
 function strokeHueColor(s, light=63){ return `hsl(${s.hue} 70% ${light}%)`; }
+
+/* ----------------------------------------------------------------------------
+   easing — the "animation speed" curve: a CSS-style cubic-bezier(x1,y1,x2,y2)
+   that shapes how a stroke draws on (and that the exporter bakes into keyframes)
+   ------------------------------------------------------------------------- */
+const EASE_PRESETS = [
+  { name:'linear',      v:[0,0,1,1] },
+  { name:'ease in',     v:[0.42,0,1,1] },
+  { name:'ease out',    v:[0,0,0.58,1] },
+  { name:'ease in-out', v:[0.42,0,0.58,1] },
+  { name:'exponential', v:[0.7,0,0.84,0] },
+  { name:'expo out',    v:[0.16,1,0.3,1] },
+];
+// evaluate y for a given x in [0,1] on cubic-bezier(x1,y1,x2,y2) (Newton + bisect)
+function easeY(p, x){
+  const x1=p[0], y1=p[1], x2=p[2], y2=p[3];
+  const cx=3*x1, bx=3*(x2-x1)-cx, ax=1-cx-bx;
+  const cy=3*y1, by=3*(y2-y1)-cy, ay=1-cy-by;
+  const sx=t=>((ax*t+bx)*t+cx)*t, sy=t=>((ay*t+by)*t+cy)*t, dx=t=>(3*ax*t+2*bx)*t+cx;
+  x=clamp(x,0,1);
+  let t=x;
+  for(let i=0;i<8;i++){ const e=sx(t)-x; if(Math.abs(e)<1e-6) break; const d=dx(t); if(Math.abs(d)<1e-6) break; t-=e/d; }
+  if(t<0||t>1){ let lo=0,hi=1; for(let i=0;i<24;i++){ t=(lo+hi)/2; if(sx(t)<x) lo=t; else hi=t; } }
+  return clamp(sy(clamp(t,0,1)),0,1);
+}
+const easeStr = v => `cubic-bezier(${v.map(n=>+(+n).toFixed(2)).join(', ')})`;
+function parseEase(str){
+  const m=(str||'').match(/-?\d*\.?\d+/g);
+  if(!m || m.length<4) return null;
+  const v=m.slice(0,4).map(Number);
+  if(v.some(n=>!Number.isFinite(n))) return null;
+  v[0]=clamp(v[0],0,1); v[2]=clamp(v[2],0,1);   // x's must stay in [0,1] for a valid easing
+  return v;
+}
+const easeEq = (a,b) => !!(a&&b) && a.every((n,i)=>Math.abs(n-b[i])<0.005);
+function strokeEase(st){ return (st && st.easing) || state.brush.easing; }
 
 /* ----------------------------------------------------------------------------
    2) DRAWING — pointer routing, recording, selection
@@ -298,8 +341,7 @@ window.addEventListener('pointermove', e=>{
   if(state.boxSel){ const p=localPt(e,canvas); state.boxSel.x1=p.x; state.boxSel.y1=p.y; renderOverlay(); return; }
   if(!state.drag) return;
   const d=state.drag;
-  if(d.kind==='node') dragNode(e);
-  else if(d.kind==='driftStart'||d.kind==='driftEnd') dragDrift(e,d.kind);
+  if(d.kind==='driftStart'||d.kind==='driftEnd') dragDrift(e,d.kind);
   else if(d.kind==='body') dragBody(e,d);
   else if(d.kind==='bar'||d.kind==='barDur'||d.kind==='barHold') dragBar(e,d);
 });
@@ -333,24 +375,13 @@ function translateStroke(st,dx,dy){
 function dragBody(e,d){
   const st=state.strokes.find(s=>s.id===d.id); if(!st||!editable(st)) return;
   const p=localPt(e,canvas); translateStroke(st,p.x-d.last.x,p.y-d.last.y); d.last=p;
-  invalidateCache(); renderCanvas(); renderGraph();
+  invalidateCache(); renderCanvas();
 }
 function dragDrift(e,kind){
   const st=selected(); if(!editable(st)) return;
   const p=localPt(e,canvas);
   if(kind==='driftStart') st.offsetStart={x:p.x,y:p.y}; else st.offsetEnd={x:p.x,y:p.y};
   renderOverlay();
-}
-
-// Reduce a node list to at most `max` entries, evenly spaced, first/last kept.
-function downsampleNodes(nodes, max=10){
-  if(nodes.length<=max) return nodes;
-  const out=[]; let prev=-1;
-  for(let i=0;i<max;i++){
-    const idx=Math.round(i*(nodes.length-1)/(max-1));
-    if(idx!==prev){ out.push(nodes[idx]); prev=idx; }
-  }
-  return out;
 }
 
 function finishRecording(){
@@ -368,21 +399,11 @@ function finishRecording(){
   const segments = fitCurve(simplified.map(p=>({x:p.x,y:p.y})), 6);
   if(segments.length===0){ renderCanvas(); return; }
 
-  // initial nodes: one per simplified point, t from original timing
-  let nodes = simplified.map(p=>{
-    const loc=locateOnPath(segments,p);
-    return { t:clamp((p.time-t0)/rawDur,0,1), opacity:1, segmentIndex:loc.segmentIndex, segmentT:loc.segmentT };
-  });
-  // guarantee monotone-ish endpoints
-  if(nodes.length){ nodes[0].t=0; nodes[nodes.length-1].t=Math.max(nodes[nodes.length-1].t,1e-3); }
-  // keep the scatter graph legible: at most 10 nodes, evenly spaced, ends preserved
-  nodes = downsampleNodes(nodes, 10);
-
   const c = centroid({segments});
   pushHistory();
   const stroke = {
     id:uid(), hue:(hueSeed = (hueSeed+67)%360), groupId:null,
-    segments, nodes,
+    segments, easing: state.brush.easing.slice(),   // draw-on speed curve
     thickness: state.brush.thickness, colour: state.brush.colour,
     timelineStart: +(state.strokes.length*0.3).toFixed(3),
     timelineDuration: +Math.max(rawDur,0.4).toFixed(3),
@@ -400,7 +421,7 @@ function selectStroke(id){
   const st=state.strokes.find(s=>s.id===id);
   if(st && isHidden(st)) return;
   if(id!==state.selectedId) invalidateCache();   // selection moves a stroke in/out of the cache
-  state.selectedId=id; state.selectedGroupId=null; state.hoverNode=-1;
+  state.selectedId=id; state.selectedGroupId=null;
   syncBrushControls();
   renderAll();
 }
@@ -426,7 +447,7 @@ function pushHistory(){
 }
 function undo(){ if(!state.history.length) return; state.future.push(snapshot()); applySnapshot(state.history.pop()); afterMutation(); }
 function redo(){ if(!state.future.length) return; state.history.push(snapshot()); applySnapshot(state.future.pop()); afterMutation(); }
-function afterMutation(){ invalidateCache(); state.hoverNode=-1; syncBrushControls(); updateUndoButtons(); renderAll(); }
+function afterMutation(){ invalidateCache(); syncBrushControls(); updateUndoButtons(); renderAll(); }
 function updateUndoButtons(){
   const u=document.getElementById('undoBtn'), r=document.getElementById('redoBtn');
   if(u) u.disabled=!state.history.length;
@@ -471,6 +492,7 @@ function syncBrushControls(){
   if(ti) ti.value=thick;
   if(tv) tv.textContent=Number(thick).toFixed(1);
   if(ci) ci.value=col;
+  renderEasing();
 }
 
 /* ----------------------------------------------------------------------------
@@ -611,18 +633,6 @@ function strokePath(segments){
   for(const s of segments) p.bezierCurveTo(s.cp1.x,s.cp1.y,s.cp2.x,s.cp2.y,s.p1.x,s.p1.y);
   return p;
 }
-function opacityAt(stroke,lt){
-  const ns=[...stroke.nodes].sort((a,b)=>a.t-b.t);
-  if(!ns.length) return 1;
-  if(lt<=ns[0].t) return ns[0].opacity;
-  if(lt>=ns[ns.length-1].t) return ns[ns.length-1].opacity;
-  for(let i=0;i<ns.length-1;i++)
-    if(lt>=ns[i].t && lt<=ns[i+1].t){
-      const span=(ns[i+1].t-ns[i].t)||1;
-      return lerp(ns[i].opacity, ns[i+1].opacity, (lt-ns[i].t)/span);
-    }
-  return ns[ns.length-1].opacity;
-}
 function drawTrimmed(pts, frac){
   if(pts.length<2 || frac<=0) return;
   let total=0; const seg=[];
@@ -648,7 +658,7 @@ function rebuildCache(){
   cacheCtx.lineCap='round'; cacheCtx.lineJoin='round';
   for(const st of state.strokes){
     if(isHidden(st) || st.id===state.selectedId) continue;
-    cacheCtx.globalAlpha=isLocked(st)?0.32:1;
+    cacheCtx.globalAlpha=(isLocked(st)?0.32:1)*state.transparency;   // global transparency tints the whole scene
     cacheCtx.strokeStyle=st.colour||'#d4d4d8'; cacheCtx.lineWidth=st.thickness||2;
     cacheCtx.stroke(strokePath(st.segments));
   }
@@ -664,9 +674,9 @@ function renderPlayback(){
     const c=centroid(st);
     const off={x:lerp(st.offsetStart.x,st.offsetEnd.x,ld)-c.x, y:lerp(st.offsetStart.y,st.offsetEnd.y,ld)-c.y};
     ctx.save(); ctx.translate(off.x,off.y);
-    ctx.globalAlpha=clamp(opacityAt(st,lt),0,1);
+    ctx.globalAlpha=state.transparency;                       // global transparency across the whole animation
     ctx.strokeStyle=st.colour||'#eaeaee'; ctx.lineWidth=st.thickness||2.2;
-    drawTrimmed(flatten(st.segments,18), lt);
+    drawTrimmed(flatten(st.segments,18), easeY(strokeEase(st), lt));   // draw-on shaped by the speed curve
     ctx.restore(); ctx.globalAlpha=1;
   }
 }
@@ -689,14 +699,10 @@ function renderCanvas(){
   if(st && !isHidden(st)){
     const w=st.thickness||2, path=strokePath(st.segments);
     ctx.globalAlpha=isLocked(st)?0.5:1;
-    ctx.strokeStyle=var_accent(); ctx.lineWidth=w+3; ctx.stroke(path);   // selection halo
+    ctx.strokeStyle=var_accent(); ctx.lineWidth=w+3; ctx.stroke(path);   // selection halo (always visible)
+    ctx.globalAlpha=(isLocked(st)?0.5:1)*state.transparency;
     ctx.strokeStyle=st.colour||'#d4d4d8'; ctx.lineWidth=w; ctx.stroke(path);
     ctx.globalAlpha=1;
-    if(state.hoverNode>=0 && st.nodes[state.hoverNode]){
-      const q=nodePathPos(st,st.nodes[state.hoverNode]);
-      ctx.fillStyle=nodeColor(state.hoverNode,st.nodes.length);
-      ctx.beginPath(); ctx.arc(q.x,q.y,3.2,0,7); ctx.fill();
-    }
   }
   renderOverlay();
   renderStats();
@@ -723,128 +729,69 @@ function renderOverlay(){
     svg+=`<circle data-handle="driftStart" cx="${a.x}" cy="${a.y}" r="8" fill="rgba(106,209,255,.15)" stroke="#6ad1ff" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
     svg+=`<circle data-handle="driftEnd" cx="${b.x}" cy="${b.y}" r="8" fill="rgba(255,180,84,.18)" stroke="#ffb454" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
     if(!moved) svg+=`<text x="${a.x+13}" y="${a.y-9}" fill="#6e6e76" font-size="9" font-family="monospace">drag ▸ to add drift</text>`;
-    if(state.hoverNode>=0 && st.nodes[state.hoverNode]){
-      const q=nodePathPos(st,st.nodes[state.hoverNode]);
-      svg+=`<circle cx="${q.x}" cy="${q.y}" r="7" fill="none" stroke="#fff" stroke-width="1.5"/>`;
-    }
   }
   overlay.innerHTML=svg;
 }
 function renderStats(){
   const st=selected();
   stats.textContent = `${state.strokes.length} stroke${state.strokes.length!==1?'s':''}`
-    + (st?` · selected: ${st.nodes.length} nodes · ${st.segments.length} segments`:'')
-    + ` · ${totalDuration().toFixed(2)}s`;
+    + (st?` · selected: ${st.segments.length} segments`:'')
+    + ` · ${Math.round(state.transparency*100)}% opacity · ${totalDuration().toFixed(2)}s`;
 }
 
 /* ----------------------------------------------------------------------------
-   5) NODE GRAPH RENDERER — scatter plot, draggable nodes, opacity curve
+   5) ANIMATION SPEED EDITOR — easing curve presets + copy/paste cubic-bezier.
+   Edits the selected stroke's easing (or the brush default when nothing's
+   selected). The curve shapes how fast the stroke draws on.
    ------------------------------------------------------------------------- */
-const GPL=38, GPR=16, GPT=30, GPB=24; // plot padding (left/right/top/bottom)
-function gW(){ return graph.clientWidth; }
-function gH(){ return graph.clientHeight; }
-function gx(t){ return GPL + clamp(t,0,1)*(gW()-GPL-GPR); }
-function gy(op){ return GPT + (1-clamp(op,0,1))*(gH()-GPT-GPB); }
-function ginvT(px){ return clamp((px-GPL)/((gW()-GPL-GPR)||1),0,1); }
-function ginvOp(py){ return clamp(1-(py-GPT)/((gH()-GPT-GPB)||1),0,1); }
-const snap=(v,targets,tol)=>{ for(const t of targets) if(Math.abs(v-t)<tol) return t; return v; };
+// preset buttons are built once; renderEasing only toggles their active state
+easePresets.innerHTML = EASE_PRESETS
+  .map((p,i)=>`<button data-ease="${i}" title="${easeStr(p.v)}">${p.name}</button>`).join('');
 
-function smoothGraphPath(pts){
-  if(pts.length<2){ return pts.length?`M ${pts[0].x} ${pts[0].y}`:''; }
-  let d=`M ${pts[0].x} ${pts[0].y}`;
-  for(let i=0;i<pts.length-1;i++){
-    const p0=pts[i-1]||pts[i], p1=pts[i], p2=pts[i+1], p3=pts[i+2]||p2;
-    d+=` C ${p1.x+(p2.x-p0.x)/6} ${p1.y+(p2.y-p0.y)/6} ${p2.x-(p3.x-p1.x)/6} ${p2.y-(p3.y-p1.y)/6} ${p2.x} ${p2.y}`;
-  }
-  return d;
-}
-// map a normalized t to a position on the path (for added nodes' highlight)
-function nodeAtT(st,t){
-  const n=st.segments.length, f=clamp(t,0,1)*n, si=Math.min(Math.floor(f),n-1);
-  return {segmentIndex:si, segmentT:clamp(f-si,0,1)};
-}
-function renderGraph(){
+function renderEasing(){
   const st=selected();
-  const W=gW(), H=gH(), x0=gx(0), x1=gx(1), y0=gy(0), y1=gy(1);
-  let svg=`<rect x="${GPL}" y="${GPT}" width="${(W-GPL-GPR)}" height="${(H-GPT-GPB)}" fill="#0b0b0d"/>`;
-  // opacity gridlines + % labels (y)
-  for(const v of [0,0.25,0.5,0.75,1]){
-    svg+=`<line x1="${x0}" y1="${gy(v)}" x2="${x1}" y2="${gy(v)}" stroke="#17171c"/>
-          <text x="${GPL-5}" y="${gy(v)+3}" fill="#46464d" font-size="8" text-anchor="end" font-family="monospace">${Math.round(v*100)}</text>`;
+  const locked = st && !editable(st);
+  const v = strokeEase(st);
+  // plot the curve in a 0..100 viewBox (y flipped); reference diagonal = linear
+  let d='M 0 100';
+  for(let i=1;i<=48;i++){ const x=i/48; d+=` L ${(x*100).toFixed(2)} ${((1-easeY(v,x))*100).toFixed(2)}`; }
+  let svg=`<line x1="0" y1="100" x2="100" y2="0" stroke="#1d1d21" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  svg+=`<path d="${d}" fill="none" stroke="${locked?'#3a3a40':var_accent()}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  if(state.playing && st && state.playhead>=st.timelineStart){
+    const lt=clamp((state.playhead-st.timelineStart)/(st.timelineDuration||1),0,1);
+    if(lt<=1) svg+=`<line x1="${(lt*100).toFixed(2)}" y1="0" x2="${(lt*100).toFixed(2)}" y2="100" stroke="#6ad1ff" stroke-width="1" opacity=".7" vector-effect="non-scaling-stroke"/>`;
   }
-  // time gridlines + second labels (x) — real seconds when a stroke is selected
-  for(const v of [0,0.25,0.5,0.75,1]){
-    const sec = st ? st.timelineStart + v*st.timelineDuration : v;
-    svg+=`<line x1="${gx(v)}" y1="${y1}" x2="${gx(v)}" y2="${y0}" stroke="#17171c"/>
-          <text x="${gx(v)}" y="${H-GPB+12}" fill="#46464d" font-size="8" text-anchor="middle" font-family="monospace">${st?fmt(sec)+'s':v}</text>`;
-  }
-  svg+=`<text x="${GPL-30}" y="${GPT+8}" fill="#6e6e76" font-size="8" font-family="monospace" transform="rotate(-90 ${GPL-30} ${GPT+8})">opacity %</text>`;
+  easeCurve.innerHTML=svg;
 
-  if(st && st.nodes.length){
-    const sorted=[...st.nodes].map((n,i)=>({n,i})).sort((a,b)=>a.n.t-b.n.t);
-    const curve=sorted.map(o=>({x:gx(o.n.t),y:gy(o.n.opacity)}));
-    const line=smoothGraphPath(curve);
-    // filled envelope under the curve
-    svg+=`<path d="${line} L ${curve[curve.length-1].x} ${y0} L ${curve[0].x} ${y0} Z" fill="#6ad1ff" opacity="0.07"/>`;
-    svg+=`<path d="${line}" fill="none" stroke="#4f93ab" stroke-width="1.6"/>`;
-    // playhead (during playback)
-    if(state.playing){
-      const lt=clamp((state.playhead-st.timelineStart)/(st.timelineDuration||1),0,1);
-      if(state.playhead>=st.timelineStart) svg+=`<line x1="${gx(lt)}" y1="${y1}" x2="${gx(lt)}" y2="${y0}" stroke="#6ad1ff" stroke-width="1" opacity=".7"/>`;
-    }
-    st.nodes.forEach((n,i)=>{
-      const hov=i===state.hoverNode;
-      svg+=`<circle data-node="${i}" cx="${gx(n.t)}" cy="${gy(n.opacity)}" r="${hov?7.5:6}"
-              fill="${nodeColor(i,st.nodes.length)}" stroke="${hov?'#fff':'#0b0b0d'}" stroke-width="1.5" style="cursor:grab"/>`;
-    });
-  } else {
-    const msg = st ? 'locked — unlock its group to edit' : 'select a stroke to shape its fade';
-    svg+=`<text x="${W/2}" y="${H/2}" fill="#3a3a40" font-size="10" text-anchor="middle" font-family="monospace">${msg}</text>`;
-  }
-  graph.innerHTML=svg;
+  // active preset highlight + text field (don't fight the user while typing)
+  Array.from(easePresets.children||[]).forEach((b,i)=>b.classList.toggle('on', easeEq(EASE_PRESETS[i].v, v)));
+  if(document.activeElement!==easeText) easeText.value=easeStr(v);
+  easeText.disabled = !!locked;
 }
 
-function graphNodeIndex(e){
-  const idx=e.target.getAttribute && e.target.getAttribute('data-node');
-  return (idx!==null && idx!==undefined && idx!=='') ? +idx : -1;
+// apply an easing to the selected stroke (and remember it as the brush default)
+function setEasing(v, record=true){
+  const st=selected();
+  if(st && !editable(st)){ renderEasing(); return; }     // locked/hidden — nothing to edit
+  v=[clamp(v[0],0,1), v[1], clamp(v[2],0,1), v[3]];
+  state.brush.easing=v.slice();
+  if(st){ if(record) pushHistory(); st.easing=v.slice(); }
+  renderEasing(); renderCanvas();
 }
-graph.addEventListener('pointerdown', e=>{
-  const st=selected(); if(!editable(st)) return;
-  const idx=graphNodeIndex(e);
-  if(idx>=0){ pushHistory(); state.drag={kind:'node', index:idx}; state.hoverNode=idx; }
-});
-graph.addEventListener('pointermove', e=>{
-  if(state.drag){ if(state.drag.kind==='node') graph.style.cursor='grabbing'; return; }
-  const st=selected(); if(!editable(st)){ graph.style.cursor='default'; return; }
-  const p=localPt(e,graph);
-  let best=-1,bd=15*15;
-  st.nodes.forEach((n,i)=>{ const dx=gx(n.t)-p.x,dy=gy(n.opacity)-p.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} });
-  graph.style.cursor = best>=0 ? 'grab' : 'copy';
-  if(best!==state.hoverNode){ state.hoverNode=best; renderGraph(); renderOverlay(); }
-});
-graph.addEventListener('pointerleave', ()=>{ if(state.hoverNode!==-1 && !state.drag){ state.hoverNode=-1; renderGraph(); renderOverlay(); } });
-graph.addEventListener('dblclick', e=>{
-  const st=selected(); if(!editable(st)) return;
-  const idx=graphNodeIndex(e);
-  if(idx>=0){                                   // remove node (keep at least 2)
-    if(st.nodes.length<=2) return;
-    pushHistory(); st.nodes.splice(idx,1); state.hoverNode=-1; renderGraph(); renderCanvas();
-  } else {                                       // add a node at the click
-    const p=localPt(e,graph), t=ginvT(p.x), op=ginvOp(p.y);
-    pushHistory();
-    st.nodes.push({ t, opacity:op, ...nodeAtT(st,t) });
-    renderGraph(); renderCanvas();
-  }
-});
 
-function dragNode(e){
-  const st=selected(); if(!editable(st)) return;
-  const n=st.nodes[state.drag.index]; if(!n) return;
-  const p=localPt(e,graph);
-  n.t=snap(ginvT(p.x), [0,0.25,0.5,0.75,1], 0.015);          // light snap to time gridlines
-  n.opacity=snap(ginvOp(p.y), [0,0.25,0.5,0.75,1], 0.03);     // and opacity gridlines
-  renderGraph(); renderCanvas();
-}
+easePresets.addEventListener('click', e=>{
+  const i=e.target.getAttribute && e.target.getAttribute('data-ease');
+  if(i!==null && i!==undefined && i!=='') setEasing(EASE_PRESETS[+i].v.slice());
+});
+easeText.addEventListener('change', ()=>{
+  const v=parseEase(easeText.value);
+  if(v) setEasing(v); else renderEasing();    // reject garbage, restore display
+});
+easeText.addEventListener('keydown', e=>{ if(e.key==='Enter') easeText.blur(); });
+document.getElementById('easeCopy').onclick=()=>{
+  const txt=easeStr(strokeEase(selected()));
+  navigator.clipboard?.writeText(txt).catch(()=>{});
+};
 
 /* ----------------------------------------------------------------------------
    6) TIMELINE RENDERER — bars (start/duration/hold), ruler, playhead
@@ -991,7 +938,7 @@ function tick(ts){
   state.playhead+=dt;
   const total=totalDuration();
   if(state.playhead>total) state.playhead=0;     // loop
-  renderCanvas(); renderTimeline(); renderGraph();
+  renderCanvas(); renderTimeline(); renderEasing();
   requestAnimationFrame(tick);
 }
 function play(){
@@ -1037,6 +984,14 @@ document.getElementById('colour').oninput=(e)=>{
   const st=selected(); if(st && editable(st)){ st.colour=v; invalidateCache(); renderCanvas(); }
 };
 document.getElementById('colour').onchange=()=>{ brushPending=false; };
+
+// global transparency — one opacity for the whole animation (preview + export)
+document.getElementById('globalOpacity').oninput=(e)=>{
+  state.transparency = clamp(+e.target.value/100, 0, 1);
+  document.getElementById('opacityVal').textContent = e.target.value;
+  invalidateCache();                               // the resting cache bakes in transparency
+  renderCanvas(); renderStats();
+};
 
 // groups panel — row select toggles collapse; inline buttons lock/hide/ungroup
 document.getElementById('groupsList').addEventListener('click', e=>{
@@ -1108,7 +1063,8 @@ function hexToRiveColor(hex){
   return ((0xff<<24)|(r<<16)|(g<<8)|b)>>>0;
 }
 
-function exportRiv(strokes, W, H){
+function exportRiv(strokes, W, H, transparency=1){
+  const tr=clamp(transparency,0,1);   // global opacity baked into every stroke
   const body=[];                 // byte stream (object section)
   const toc=new Map();           // propertyKey -> backing-type code
   const enc=new TextEncoder();
@@ -1216,17 +1172,19 @@ function exportRiv(strokes, W, H){
     const fDraw =Math.round((st.timelineStart+st.timelineDuration)*FPS);
     const fEnd  =Math.round(strokeEnd(st)*FPS);     // end of "present" (hold) — may be the animation end
 
-    // trimEnd on the TrimPath: 0 -> 1 across the draw duration
+    // trimEnd on the TrimPath: 0 -> 1 across the draw duration, shaped by the
+    // stroke's easing curve. KeyFrameDouble interp is linear, so we sample the
+    // bezier into a handful of keyframes that approximate the curvature.
     obj(T.KeyedObject); pUint(P.objectId,m.TRIM); end();
-      keyedProp(P.trimEnd, [[fStart,0],[Math.max(fDraw,fStart+1),1]]);
+      const ease=st.easing||[0,0,1,1], trimK=[];
+      const STEPS = easeEq(ease,[0,0,1,1]) ? 1 : 14;     // linear needs only the two ends
+      for(let i=0;i<=STEPS;i++) trimK.push([Math.round(lerp(fStart,Math.max(fDraw,fStart+1),i/STEPS)), easeY(ease,i/STEPS)]);
+      keyedProp(P.trimEnd, trimK);
 
-    // opacity + drift on the Shape (one KeyedObject, multiple KeyedProperties)
+    // opacity + drift on the Shape (one KeyedObject, multiple KeyedProperties).
+    // Opacity is the flat global transparency while present, then it disappears.
     obj(T.KeyedObject); pUint(P.objectId,m.SHAPE); end();
-      const opK = st.nodes
-        .map(n=>[Math.round((st.timelineStart+n.t*st.timelineDuration)*FPS), clamp(n.opacity,0,1)])
-        .sort((a,b)=>a[0]-b[0]);
-      const lastOp = opK.length ? opK[opK.length-1][1] : 1;
-      opK.push([fEnd, lastOp]);                      // hold the final opacity through the present/hold section
+      const opK = [[fStart, tr], [fEnd, tr]];        // hold the global transparency through the present/hold section
       if(fEnd<durFrames) opK.push([fEnd+1, 0]);      // then disappear (unless it already runs to the animation end)
       keyedProp(P.opacity, opK);
       const drift = Math.abs(st.offsetStart.x-st.offsetEnd.x)>0.01 || Math.abs(st.offsetStart.y-st.offsetEnd.y)>0.01;
@@ -1277,7 +1235,7 @@ function strictlyIncreasing(frames){
 
 document.getElementById('exportBtn').onclick=()=>{
   if(state.strokes.length===0){ alert('Draw a stroke first.'); return; }
-  const bytes=exportRiv(state.strokes, state.canvas.w, state.canvas.h);
+  const bytes=exportRiv(state.strokes, state.canvas.w, state.canvas.h, state.transparency);
   const blob=new Blob([bytes],{type:'application/octet-stream'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download='animation.riv';
@@ -1288,7 +1246,7 @@ document.getElementById('exportBtn').onclick=()=>{
 /* ----------------------------------------------------------------------------
    bootstrap
    ------------------------------------------------------------------------- */
-function renderAll(){ renderCanvas(); renderGraph(); renderTimeline(); renderGroups(); }
+function renderAll(){ renderCanvas(); renderEasing(); renderTimeline(); renderGroups(); }
 function onResize(){ fitCanvas(); renderAll(); }
 window.addEventListener('resize', onResize);
 setTool('draw');
