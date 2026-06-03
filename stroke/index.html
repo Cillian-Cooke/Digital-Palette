@@ -1,0 +1,1300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stroke</title>
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#0e0e10; --line:#1d1d21; --line2:#2a2a30;
+    --ink:#d9d9dd; --muted:#6e6e76; --dim:#46464d;
+    --accent:#6ad1ff; --accent2:#ffb454;
+    --mono:"SFMono-Regular",ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--mono);font-size:12px;-webkit-font-smoothing:antialiased;overflow:hidden}
+  button{font-family:var(--mono);font-size:11px;color:var(--ink);background:#15151a;
+    border:1px solid var(--line2);border-radius:4px;padding:5px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:#fff}
+  button:active{transform:translateY(1px)}
+  .label{color:var(--muted);text-transform:lowercase;letter-spacing:.04em}
+
+  #app{display:grid;grid-template-rows:1fr 168px;height:100vh;width:100vw}
+  #top{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0}
+
+  /* Canvas panel */
+  #canvasPanel{position:relative;border-right:1px solid var(--line);overflow:hidden;background:#070708}
+  #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  #stats{position:absolute;bottom:8px;left:10px;color:var(--dim);z-index:5;pointer-events:none}
+  #canvasHint{position:absolute;top:10px;left:12px;color:var(--dim);z-index:5;pointer-events:none}
+
+  /* Right rail: node graph · toolbar · groups */
+  #rightRail{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
+  #graphPanel{position:relative;flex:0 0 44%;min-height:170px;border-bottom:1px solid var(--line)}
+  #graph{position:absolute;inset:0;width:100%;height:100%}
+  #graphPanel .tag{position:absolute;top:8px;left:10px;color:var(--muted);z-index:2;pointer-events:none}
+
+  #toolbar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+    padding:8px;border-bottom:1px solid var(--line);background:#0c0c0e}
+  #toolbar button.active{border-color:var(--accent);color:#fff;background:#16242b}
+  #toolbar .ctl{display:flex;gap:5px;align-items:center;padding:0 6px;border:1px solid var(--line2);
+    border-radius:4px;height:26px;background:#15151a}
+  #toolbar input[type=range]{width:78px;accent-color:var(--accent);vertical-align:middle;cursor:ew-resize}
+  #toolbar input[type=color]{width:22px;height:18px;padding:0;border:1px solid var(--line2);
+    border-radius:3px;background:transparent;cursor:pointer;vertical-align:middle}
+  #toolbar #thickVal{min-width:26px;text-align:right}
+  #toolbar .sep{flex-basis:100%;height:0}
+
+  /* Groups / layers panel */
+  #groupsPanel{flex:1 1 0;min-height:0;overflow-y:auto;padding:6px 8px}
+  #groupsPanel .ghead{display:flex;align-items:center;justify-content:space-between;
+    color:var(--muted);margin:0 0 6px;letter-spacing:.04em}
+  #groupsPanel .empty{color:var(--dim);padding:8px 2px;line-height:1.5}
+  .grow{display:flex;align-items:center;gap:6px;padding:5px 6px;border:1px solid var(--line);
+    border-radius:5px;margin-bottom:5px;background:#101013;cursor:pointer}
+  .grow.sel{border-color:var(--accent);background:#13202610}
+  .grow .swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto}
+  .grow .gname{flex:1 1 auto;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .grow .gmeta{color:var(--dim)}
+  .grow .gbtn{font-size:12px;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid var(--line2);
+    background:#15151a;color:var(--muted);cursor:pointer}
+  .grow .gbtn:hover{border-color:var(--accent);color:#fff}
+  .grow .gbtn.on{color:var(--accent);border-color:var(--line2)}
+
+  /* Timeline */
+  #timeline{position:relative;border-top:1px solid var(--line);background:var(--panel);overflow:hidden}
+  #tlRuler{position:absolute;top:0;left:0;right:0;height:18px;z-index:2;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  #tlScroll{position:absolute;top:18px;left:0;right:0;bottom:0;overflow-y:auto;overflow-x:hidden}
+  #timelineSvg{display:block;width:100%}
+  #timeline .tag{position:absolute;top:2px;right:10px;color:var(--dim);z-index:3;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <div id="canvasPanel">
+      <canvas id="canvas"></canvas>
+      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="canvasHint">draw · click to select · drag body to move · drag arrow to set drift</div>
+      <div id="stats"></div>
+    </div>
+    <div id="rightRail">
+      <div id="graphPanel">
+        <div class="tag">opacity / time · drag · dbl-click ±</div>
+        <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div id="toolbar">
+        <button id="playBtn">▶ play</button>
+        <button id="exportBtn">⤓ export</button>
+        <button id="undoBtn" title="undo (Ctrl+Z)">↶</button>
+        <button id="redoBtn" title="redo (Ctrl+Shift+Z)">↷</button>
+        <button id="boxBtn" title="box-select strokes into a locked group">▢ select</button>
+        <button id="groupBtn" title="group the box-selected strokes" style="display:none">＋ group</button>
+        <button id="deleteBtn" title="delete selected stroke (Del)">🗑</button>
+        <button id="clearBtn">clear</button>
+        <span class="sep"></span>
+        <span class="ctl"><span class="label">width</span>
+          <input id="thickness" type="range" min="1" max="20" step="0.5" value="4">
+          <span id="thickVal" class="label">4.0</span></span>
+        <span class="ctl"><span class="label">colour</span>
+          <input id="colour" type="color" value="#ffffff"></span>
+      </div>
+      <div id="groupsPanel">
+        <div class="ghead"><span>groups</span><span id="groupCount" class="gmeta"></span></div>
+        <div id="groupsList"></div>
+      </div>
+    </div>
+  </div>
+  <div id="timeline">
+    <div class="tag">timeline</div>
+    <svg id="tlRuler" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="tlScroll"><svg id="timelineSvg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   STROKE — draw mouse strokes, shape them into Rive animations, export .riv
+   Sections: 1 State · 2 Drawing · 3 Processing · 4 Canvas · 5 Node graph
+             6 Timeline · 7 Animation engine · 8 Rive exporter
+   ========================================================================= */
+
+/* ----------------------------------------------------------------------------
+   1) STATE — single source of truth
+   ------------------------------------------------------------------------- */
+const state = {
+  strokes: [],          // Stroke[]   (array order = z-order: later = on top)
+  selectedId: null,
+  selectedGroupId: null,
+  playing: false,
+  playhead: 0,          // seconds
+  drag: null,           // {kind, ...}
+  recording: null,      // {raw:[{x,y,time}]}
+  hoverNode: -1,        // index into selected stroke's nodes
+  canvas: { w: 0, h: 0 },
+  brush: { thickness: 4, colour: '#ffffff' },  // defaults for the next stroke
+  tool: 'draw',         // 'draw' | 'box'
+  groups: [],           // Group[] {id,name,hue,strokeIds:[],locked,hidden,collapsed}
+  boxSel: null,         // live marquee {x0,y0,x1,y1}
+  marquee: [],          // stroke ids captured by the last box-select (pending group)
+  history: [],          // undo stack (snapshots)
+  future: [],           // redo stack
+};
+let hueSeed = 0;
+let groupSeed = 0;
+const uid = () => 's' + Math.random().toString(36).slice(2, 9);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, f) => a + (b - a) * f;
+function selected(){ return state.strokes.find(s => s.id === state.selectedId) || null; }
+
+// element refs
+const canvas = document.getElementById('canvas');
+const overlay = document.getElementById('overlay');
+const graph = document.getElementById('graph');
+const tlSvg = document.getElementById('timelineSvg');
+const tlRuler = document.getElementById('tlRuler');
+const tlScroll = document.getElementById('tlScroll');
+const ctx = canvas.getContext('2d');
+const stats = document.getElementById('stats');
+
+// group lookup helpers
+function groupOf(st){ return st.groupId ? state.groups.find(g=>g.id===st.groupId)||null : null; }
+function isLocked(st){ const g=groupOf(st); return !!(g && g.locked); }
+function isHidden(st){ const g=groupOf(st); return !!(g && g.hidden); }
+function editable(st){ return st && !isLocked(st) && !isHidden(st); }
+
+/* ----------------------------------------------------------------------------
+   small vector helpers (operate on {x,y})
+   ------------------------------------------------------------------------- */
+const V = {
+  sub:(a,b)=>({x:a.x-b.x,y:a.y-b.y}),
+  add:(a,b)=>({x:a.x+b.x,y:a.y+b.y}),
+  mul:(a,s)=>({x:a.x*s,y:a.y*s}),
+  dot:(a,b)=>a.x*b.x+a.y*b.y,
+  len:a=>Math.hypot(a.x,a.y),
+  dist:(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),
+  norm:a=>{const l=Math.hypot(a.x,a.y)||1;return{x:a.x/l,y:a.y/l};},
+};
+
+/* ----------------------------------------------------------------------------
+   geometry utilities shared across sections
+   ------------------------------------------------------------------------- */
+function cubicAt(seg, t){
+  const mt=1-t, a=mt*mt*mt, b=3*mt*mt*t, c=3*mt*t*t, d=t*t*t;
+  return { x:a*seg.p0.x+b*seg.cp1.x+c*seg.cp2.x+d*seg.p1.x,
+           y:a*seg.p0.y+b*seg.cp1.y+c*seg.cp2.y+d*seg.p1.y };
+}
+function flatten(segments, per=16){
+  const pts=[];
+  for(let s=0;s<segments.length;s++){
+    const seg=segments[s];
+    for(let i=(s===0?0:1);i<=per;i++) pts.push(cubicAt(seg,i/per));
+  }
+  return pts;
+}
+function centroid(stroke){
+  const pts=flatten(stroke.segments,8);
+  let x=0,y=0; for(const p of pts){x+=p.x;y+=p.y;}
+  return pts.length?{x:x/pts.length,y:y/pts.length}:{x:0,y:0};
+}
+function locateOnPath(segments, pt){
+  let best={segmentIndex:0,segmentT:0,d:Infinity}, per=22;
+  for(let s=0;s<segments.length;s++)
+    for(let i=0;i<=per;i++){
+      const t=i/per, q=cubicAt(segments[s],t);
+      const d=(q.x-pt.x)**2+(q.y-pt.y)**2;
+      if(d<best.d) best={segmentIndex:s,segmentT:t,d};
+    }
+  return {segmentIndex:best.segmentIndex,segmentT:best.segmentT};
+}
+function nodePathPos(stroke,node){
+  const si=Math.min(node.segmentIndex, stroke.segments.length-1);
+  return cubicAt(stroke.segments[si], node.segmentT);
+}
+function distToSeg(p,a,b){
+  const dx=b.x-a.x, dy=b.y-a.y, l2=dx*dx+dy*dy;
+  if(l2===0) return V.dist(p,a);
+  let t=((p.x-a.x)*dx+(p.y-a.y)*dy)/l2; t=clamp(t,0,1);
+  return V.dist(p,{x:a.x+dx*t,y:a.y+dy*t});
+}
+function nodeColor(i,n){ const f=n<=1?0:i/(n-1); return `hsl(${(202+f*186)%360} 85% 63%)`; }
+function strokeHueColor(s, light=63){ return `hsl(${s.hue} 70% ${light}%)`; }
+
+/* ----------------------------------------------------------------------------
+   2) DRAWING — pointer routing, recording, selection
+   ------------------------------------------------------------------------- */
+function localPt(e, el){ const r=el.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+
+function strokeBBox(st){
+  const pts=flatten(st.segments,12); let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const p of pts){ if(p.x<x0)x0=p.x; if(p.y<y0)y0=p.y; if(p.x>x1)x1=p.x; if(p.y>y1)y1=p.y; }
+  return {x0,y0,x1,y1};
+}
+function strokeHit(pt){
+  for(let k=state.strokes.length-1;k>=0;k--){          // top-most first
+    const st=state.strokes[k]; if(isHidden(st)||isLocked(st)) continue;
+    const tol=Math.max(7,(st.thickness||2)/2+5);
+    const pts=flatten(st.segments,14);
+    for(let i=1;i<pts.length;i++) if(distToSeg(pt,pts[i-1],pts[i])<tol) return st.id;
+  }
+  return null;
+}
+
+function setTool(t){
+  state.tool=t;
+  const bb=document.getElementById('boxBtn'); if(bb) bb.classList.toggle('active', t==='box');
+  if(t!=='box'){ state.boxSel=null; state.marquee=[]; const gb=document.getElementById('groupBtn'); if(gb) gb.style.display='none'; }
+  canvas.style.cursor='crosshair';
+  renderOverlay();
+}
+
+canvas.addEventListener('pointerdown', e=>{
+  const p=localPt(e,canvas);
+  if(state.tool==='box'){                      // marquee select
+    state.boxSel={x0:p.x,y0:p.y,x1:p.x,y1:p.y};
+    canvas.setPointerCapture(e.pointerId); return;
+  }
+  const hit=strokeHit(p);
+  if(hit){
+    if(hit!==state.selectedId){ selectStroke(hit); return; }
+    const st=selected();                        // already selected → drag body to move
+    if(editable(st)){ pushHistory(); state.drag={kind:'body', id:hit, last:p}; canvas.style.cursor='grabbing'; }
+    return;
+  }
+  state.recording={ raw:[{x:p.x,y:p.y,time:performance.now()}] };   // new stroke
+  canvas.setPointerCapture(e.pointerId);
+});
+
+// Drift-arrow handles live in the SVG overlay; their <circle>s bubble here.
+overlay.addEventListener('pointerdown', e=>{
+  const h=e.target.getAttribute && e.target.getAttribute('data-handle');
+  if(!h) return;
+  e.stopPropagation();
+  const st=selected(); if(!editable(st)) return;
+  pushHistory();
+  state.drag={kind:h};   // 'driftStart' | 'driftEnd'
+});
+
+// hover cursor feedback over the canvas
+canvas.addEventListener('pointermove', e=>{
+  if(state.drag||state.recording||state.boxSel) return;
+  if(state.tool==='box'){ canvas.style.cursor='crosshair'; return; }
+  const hit=strokeHit(localPt(e,canvas));
+  canvas.style.cursor = hit ? (hit===state.selectedId?'move':'pointer') : 'crosshair';
+});
+
+// Centralised move/up so a drag started anywhere keeps tracking off-surface.
+window.addEventListener('pointermove', e=>{
+  if(state.recording){
+    const p=localPt(e,canvas);
+    state.recording.raw.push({x:p.x,y:p.y,time:performance.now()});
+    renderCanvas();
+    return;
+  }
+  if(state.boxSel){ const p=localPt(e,canvas); state.boxSel.x1=p.x; state.boxSel.y1=p.y; renderOverlay(); return; }
+  if(!state.drag) return;
+  const d=state.drag;
+  if(d.kind==='node') dragNode(e);
+  else if(d.kind==='driftStart'||d.kind==='driftEnd') dragDrift(e,d.kind);
+  else if(d.kind==='body') dragBody(e,d);
+  else if(d.kind==='bar'||d.kind==='barDur'||d.kind==='barHold') dragBar(e,d);
+});
+
+window.addEventListener('pointerup', ()=>{
+  if(state.recording){ finishRecording(); state.recording=null; }
+  if(state.boxSel){ finishBox(); state.boxSel=null; }
+  if(state.drag){ state.drag=null; invalidateCache(); canvas.style.cursor=''; renderCanvas(); }
+});
+
+function finishBox(){
+  const b=state.boxSel;
+  const rx0=Math.min(b.x0,b.x1), ry0=Math.min(b.y0,b.y1), rx1=Math.max(b.x0,b.x1), ry1=Math.max(b.y0,b.y1);
+  const ids=[];
+  for(const st of state.strokes){
+    if(st.groupId || isHidden(st)) continue;
+    const bb=strokeBBox(st);                     // include if bbox overlaps the marquee
+    if(bb.x1>=rx0 && bb.x0<=rx1 && bb.y1>=ry0 && bb.y0<=ry1) ids.push(st.id);
+  }
+  state.marquee=ids;
+  const gb=document.getElementById('groupBtn');
+  gb.style.display=ids.length?'':'none';
+  gb.textContent=`＋ group (${ids.length})`;
+  renderOverlay();
+}
+
+function translateStroke(st,dx,dy){
+  for(const s of st.segments){ s.p0.x+=dx;s.p0.y+=dy; s.p1.x+=dx;s.p1.y+=dy; s.cp1.x+=dx;s.cp1.y+=dy; s.cp2.x+=dx;s.cp2.y+=dy; }
+  st.offsetStart.x+=dx; st.offsetStart.y+=dy; st.offsetEnd.x+=dx; st.offsetEnd.y+=dy;
+}
+function dragBody(e,d){
+  const st=state.strokes.find(s=>s.id===d.id); if(!st||!editable(st)) return;
+  const p=localPt(e,canvas); translateStroke(st,p.x-d.last.x,p.y-d.last.y); d.last=p;
+  invalidateCache(); renderCanvas(); renderGraph();
+}
+function dragDrift(e,kind){
+  const st=selected(); if(!editable(st)) return;
+  const p=localPt(e,canvas);
+  if(kind==='driftStart') st.offsetStart={x:p.x,y:p.y}; else st.offsetEnd={x:p.x,y:p.y};
+  renderOverlay();
+}
+
+// Reduce a node list to at most `max` entries, evenly spaced, first/last kept.
+function downsampleNodes(nodes, max=10){
+  if(nodes.length<=max) return nodes;
+  const out=[]; let prev=-1;
+  for(let i=0;i<max;i++){
+    const idx=Math.round(i*(nodes.length-1)/(max-1));
+    if(idx!==prev){ out.push(nodes[idx]); prev=idx; }
+  }
+  return out;
+}
+
+function finishRecording(){
+  const raw=state.recording.raw;
+  // need real movement to make a stroke
+  let moved=0; for(let i=1;i<raw.length;i++) moved+=Math.hypot(raw[i].x-raw[i-1].x, raw[i].y-raw[i-1].y);
+  if(raw.length<2 || moved<6){ renderCanvas(); return; }
+
+  const t0=raw[0].time;
+  const rawDur=Math.max((raw[raw.length-1].time - t0)/1000, 0.05);
+
+  // STEP 1: RDP simplification (keeps timestamps)
+  const simplified = rdp(raw, 2.5);
+  // STEP 2: Schneider cubic-bezier fit
+  const segments = fitCurve(simplified.map(p=>({x:p.x,y:p.y})), 6);
+  if(segments.length===0){ renderCanvas(); return; }
+
+  // initial nodes: one per simplified point, t from original timing
+  let nodes = simplified.map(p=>{
+    const loc=locateOnPath(segments,p);
+    return { t:clamp((p.time-t0)/rawDur,0,1), opacity:1, segmentIndex:loc.segmentIndex, segmentT:loc.segmentT };
+  });
+  // guarantee monotone-ish endpoints
+  if(nodes.length){ nodes[0].t=0; nodes[nodes.length-1].t=Math.max(nodes[nodes.length-1].t,1e-3); }
+  // keep the scatter graph legible: at most 10 nodes, evenly spaced, ends preserved
+  nodes = downsampleNodes(nodes, 10);
+
+  const c = centroid({segments});
+  pushHistory();
+  const stroke = {
+    id:uid(), hue:(hueSeed = (hueSeed+67)%360), groupId:null,
+    segments, nodes,
+    thickness: state.brush.thickness, colour: state.brush.colour,
+    timelineStart: +(state.strokes.length*0.3).toFixed(3),
+    timelineDuration: +Math.max(rawDur,0.4).toFixed(3),
+    holdToEnd: true,          // "present but not animating" extends to the end of the animation by default
+    holdDuration: 0.6,        // used only once the hold edge is dragged (holdToEnd=false)
+    offsetStart:{x:c.x,y:c.y}, offsetEnd:{x:c.x,y:c.y},
+  };
+  state.strokes.push(stroke);
+  invalidateCache();
+  selectStroke(stroke.id);
+  renderAll();
+}
+
+function selectStroke(id){
+  const st=state.strokes.find(s=>s.id===id);
+  if(st && isHidden(st)) return;
+  if(id!==state.selectedId) invalidateCache();   // selection moves a stroke in/out of the cache
+  state.selectedId=id; state.selectedGroupId=null; state.hoverNode=-1;
+  syncBrushControls();
+  renderAll();
+}
+
+/* ----------------------------------------------------------------------------
+   undo / redo — snapshot the editable scene, swap between two stacks
+   ------------------------------------------------------------------------- */
+let staticDirty=true;
+function invalidateCache(){ staticDirty=true; }
+function snapshot(){
+  return structuredClone({ strokes:state.strokes, groups:state.groups,
+    selectedId:state.selectedId, selectedGroupId:state.selectedGroupId, hueSeed, groupSeed });
+}
+function applySnapshot(s){
+  state.strokes=s.strokes; state.groups=s.groups;
+  state.selectedId=s.selectedId; state.selectedGroupId=s.selectedGroupId;
+  hueSeed=s.hueSeed; groupSeed=s.groupSeed;
+}
+function pushHistory(){
+  state.history.push(snapshot());
+  if(state.history.length>50) state.history.shift();
+  state.future.length=0; updateUndoButtons();
+}
+function undo(){ if(!state.history.length) return; state.future.push(snapshot()); applySnapshot(state.history.pop()); afterMutation(); }
+function redo(){ if(!state.future.length) return; state.history.push(snapshot()); applySnapshot(state.future.pop()); afterMutation(); }
+function afterMutation(){ invalidateCache(); state.hoverNode=-1; syncBrushControls(); updateUndoButtons(); renderAll(); }
+function updateUndoButtons(){
+  const u=document.getElementById('undoBtn'), r=document.getElementById('redoBtn');
+  if(u) u.disabled=!state.history.length;
+  if(r) r.disabled=!state.future.length;
+}
+
+/* ----------------------------------------------------------------------------
+   groups — box-selected strokes locked together; editor-only (export unaffected)
+   ------------------------------------------------------------------------- */
+function selectGroup(id){ invalidateCache(); state.selectedGroupId=id; state.selectedId=null; syncBrushControls(); renderAll(); }
+function makeGroup(strokeIds){
+  strokeIds=strokeIds.filter(id=>{ const s=state.strokes.find(x=>x.id===id); return s && !s.groupId; });
+  if(!strokeIds.length) return;
+  pushHistory();
+  const g={ id:'g'+Math.random().toString(36).slice(2,8), name:'Group '+(++groupSeed),
+            hue:(groupSeed*67)%360, locked:true, hidden:false, collapsed:true };
+  state.groups.push(g);
+  strokeIds.forEach(id=>{ const st=state.strokes.find(s=>s.id===id); if(st) st.groupId=g.id; });
+  state.selectedId=null; state.selectedGroupId=g.id; state.marquee=[];
+  setTool('draw');
+  afterMutation();
+}
+function ungroup(g){ pushHistory(); state.strokes.forEach(s=>{ if(s.groupId===g.id) s.groupId=null; }); state.groups=state.groups.filter(x=>x!==g); if(state.selectedGroupId===g.id) state.selectedGroupId=null; afterMutation(); }
+function toggleLock(g){ pushHistory(); g.locked=!g.locked; afterMutation(); }
+function toggleHide(g){ pushHistory(); g.hidden=!g.hidden; if(g.hidden && selected() && selected().groupId===g.id) state.selectedId=null; afterMutation(); }
+function toggleCollapse(g){ g.collapsed=!g.collapsed; renderTimeline(); renderGroups(); }
+function deleteSelected(){
+  const st=selected(); if(!st || isLocked(st)) return;
+  pushHistory();
+  state.strokes=state.strokes.filter(s=>s!==st); state.selectedId=null;
+  afterMutation();
+}
+
+// Reflect the selected stroke's width/colour into the toolbar controls
+// (falls back to the brush defaults when nothing is selected).
+function syncBrushControls(){
+  const st=selected();
+  const thick = st ? st.thickness : state.brush.thickness;
+  const col   = st ? st.colour    : state.brush.colour;
+  const ti=document.getElementById('thickness'), tv=document.getElementById('thickVal'),
+        ci=document.getElementById('colour');
+  if(ti) ti.value=thick;
+  if(tv) tv.textContent=Number(thick).toFixed(1);
+  if(ci) ci.value=col;
+}
+
+/* ----------------------------------------------------------------------------
+   3) PROCESSING — Ramer–Douglas–Peucker + Schneider bezier fitting
+   ------------------------------------------------------------------------- */
+function rdp(points, eps){
+  if(points.length<3) return points.slice();
+  const a=points[0], b=points[points.length-1];
+  let idx=-1, max=0;
+  for(let i=1;i<points.length-1;i++){
+    const d=distToSeg(points[i],a,b);
+    if(d>max){ max=d; idx=i; }
+  }
+  if(max>eps){
+    const left=rdp(points.slice(0,idx+1),eps);
+    const right=rdp(points.slice(idx),eps);
+    return left.slice(0,-1).concat(right);
+  }
+  return [a,b];
+}
+
+// Schneider "An Algorithm for Automatically Fitting Digitized Curves"
+function fitCurve(points, tol){
+  // de-duplicate consecutive points
+  const d=[]; for(const p of points){ if(!d.length || V.dist(d[d.length-1],p)>1e-4) d.push(p); }
+  if(d.length<2) return [];
+  if(d.length===2){
+    const dist=V.dist(d[0],d[1])/3;
+    const t=V.norm(V.sub(d[1],d[0]));
+    return [{p0:d[0], cp1:V.add(d[0],V.mul(t,dist)), cp2:V.sub(d[1],V.mul(t,dist)), p1:d[1]}];
+  }
+  const leftT=V.norm(V.sub(d[1],d[0]));
+  const rightT=V.norm(V.sub(d[d.length-2],d[d.length-1]));
+  return fitCubic(d,leftT,rightT,tol).map(b=>({p0:b[0],cp1:b[1],cp2:b[2],p1:b[3]}));
+}
+function fitCubic(pts, leftT, rightT, tol){
+  if(pts.length===2){
+    const dist=V.dist(pts[0],pts[1])/3;
+    return [[pts[0], V.add(pts[0],V.mul(leftT,dist)), V.add(pts[1],V.mul(rightT,dist)), pts[1]]];
+  }
+  let u=chordParam(pts);
+  let bez=genBezier(pts,u,leftT,rightT);
+  let {error,split}=maxError(pts,bez,u);
+  if(error<tol) return [bez];
+
+  if(error<tol*4){                 // close enough to refine before splitting
+    for(let i=0;i<22;i++){
+      const up=reparam(bez,pts,u);
+      bez=genBezier(pts,up,leftT,rightT);
+      const r=maxError(pts,bez,up);
+      if(r.error<tol) return [bez];
+      u=up; error=r.error; split=r.split;
+    }
+  }
+  // split at worst point and recurse
+  let center=V.sub(pts[split-1],pts[split+1]);
+  if(center.x===0&&center.y===0) center={x:-(pts[split].y-pts[split-1].y),y:pts[split].x-pts[split-1].x};
+  const cT=V.norm(center);
+  return fitCubic(pts.slice(0,split+1),leftT,cT,tol)
+    .concat(fitCubic(pts.slice(split),V.mul(cT,-1),rightT,tol));
+}
+function chordParam(pts){
+  const u=[0]; for(let i=1;i<pts.length;i++) u[i]=u[i-1]+V.dist(pts[i],pts[i-1]);
+  const last=u[u.length-1]||1; for(let i=0;i<u.length;i++) u[i]/=last; return u;
+}
+function bern(p,t){ // evaluate cubic from 4 control pts
+  return cubicAt({p0:p[0],cp1:p[1],cp2:p[2],p1:p[3]},t);
+}
+function genBezier(pts,u,leftT,rightT){
+  const p0=pts[0], p3=pts[pts.length-1];
+  const A=u.map(t=>{
+    const mt=1-t;
+    return [ V.mul(leftT,3*t*mt*mt), V.mul(rightT,3*mt*t*t) ];
+  });
+  let c00=0,c01=0,c11=0,x0=0,x1=0;
+  for(let i=0;i<pts.length;i++){
+    const a=A[i], t=u[i], mt=1-t;
+    const b0=mt*mt*mt, b1=3*mt*mt*t, b2=3*mt*t*t, b3=t*t*t;
+    const part=V.add(V.add(V.mul(p0,b0+b1),V.mul(p3,b2+b3)),{x:0,y:0});
+    const tmp=V.sub(pts[i],part);
+    c00+=V.dot(a[0],a[0]); c01+=V.dot(a[0],a[1]); c11+=V.dot(a[1],a[1]);
+    x0+=V.dot(a[0],tmp);  x1+=V.dot(a[1],tmp);
+  }
+  const det=c00*c11-c01*c01;
+  let aL = det===0?0:(x0*c11-x1*c01)/det;
+  let aR = det===0?0:(c00*x1-c01*x0)/det;
+  const segLen=V.dist(p0,p3), eps=1e-6*segLen;
+  if(aL<eps||aR<eps){ aL=aR=segLen/3; }
+  return [p0, V.add(p0,V.mul(leftT,aL)), V.add(p3,V.mul(rightT,aR)), p3];
+}
+function reparam(bez,pts,u){
+  return u.map((t,i)=>newton(bez,pts[i],t));
+}
+function newton(bez,pt,t){
+  const p=[bez[0],bez[1],bez[2],bez[3]];
+  const q=bern(p,t);
+  // q' and q''
+  const q1=[ V.mul(V.sub(p[1],p[0]),3), V.mul(V.sub(p[2],p[1]),3), V.mul(V.sub(p[3],p[2]),3) ];
+  const q2=[ V.mul(V.sub(q1[1],q1[0]),2), V.mul(V.sub(q1[2],q1[1]),2) ];
+  const mt=1-t;
+  const qp={x:mt*mt*q1[0].x+2*mt*t*q1[1].x+t*t*q1[2].x, y:mt*mt*q1[0].y+2*mt*t*q1[1].y+t*t*q1[2].y};
+  const qpp={x:mt*q2[0].x+t*q2[1].x, y:mt*q2[0].y+t*q2[1].y};
+  const d=V.sub(q,pt);
+  const num=V.dot(d,qp), den=V.dot(qp,qp)+V.dot(d,qpp);
+  if(den===0) return t;
+  return t-num/den;
+}
+function maxError(pts,bez,u){
+  let error=0, split=Math.floor(pts.length/2);
+  const p=[bez[0],bez[1],bez[2],bez[3]];
+  for(let i=0;i<pts.length;i++){
+    const q=bern(p,u[i]);
+    const d=V.dist(q,pts[i]);
+    if(d>error){ error=d; split=i; }
+  }
+  return {error,split};
+}
+
+/* ----------------------------------------------------------------------------
+   4) CANVAS RENDERER — strokes, preview, SVG overlay handles & hover
+   ------------------------------------------------------------------------- */
+let dpr=1;
+const cacheCanvas=document.createElement('canvas');
+const cacheCtx=cacheCanvas.getContext('2d');
+function fitCanvas(){
+  const r=canvas.getBoundingClientRect();
+  state.canvas.w=Math.round(r.width); state.canvas.h=Math.round(r.height);
+  dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(r.width*dpr); canvas.height=Math.round(r.height*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  cacheCanvas.width=canvas.width; cacheCanvas.height=canvas.height;
+  invalidateCache();
+}
+
+function strokePath(segments){
+  const p=new Path2D();
+  p.moveTo(segments[0].p0.x,segments[0].p0.y);
+  for(const s of segments) p.bezierCurveTo(s.cp1.x,s.cp1.y,s.cp2.x,s.cp2.y,s.p1.x,s.p1.y);
+  return p;
+}
+function opacityAt(stroke,lt){
+  const ns=[...stroke.nodes].sort((a,b)=>a.t-b.t);
+  if(!ns.length) return 1;
+  if(lt<=ns[0].t) return ns[0].opacity;
+  if(lt>=ns[ns.length-1].t) return ns[ns.length-1].opacity;
+  for(let i=0;i<ns.length-1;i++)
+    if(lt>=ns[i].t && lt<=ns[i+1].t){
+      const span=(ns[i+1].t-ns[i].t)||1;
+      return lerp(ns[i].opacity, ns[i+1].opacity, (lt-ns[i].t)/span);
+    }
+  return ns[ns.length-1].opacity;
+}
+function drawTrimmed(pts, frac){
+  if(pts.length<2 || frac<=0) return;
+  let total=0; const seg=[];
+  for(let i=1;i<pts.length;i++){ const l=V.dist(pts[i],pts[i-1]); seg.push(l); total+=l; }
+  const target=total*frac; let acc=0;
+  ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++){
+    const l=seg[i-1];
+    if(acc+l>=target){
+      const f=(target-acc)/(l||1);
+      ctx.lineTo(lerp(pts[i-1].x,pts[i].x,f), lerp(pts[i-1].y,pts[i].y,f)); break;
+    }
+    ctx.lineTo(pts[i].x,pts[i].y); acc+=l;
+  }
+  ctx.stroke();
+}
+
+// Repaint the offscreen cache: every resting, visible, non-selected stroke.
+// Locked strokes are dimmed so they read as a backdrop.
+function rebuildCache(){
+  cacheCtx.setTransform(dpr,0,0,dpr,0,0);
+  cacheCtx.clearRect(0,0,state.canvas.w,state.canvas.h);
+  cacheCtx.lineCap='round'; cacheCtx.lineJoin='round';
+  for(const st of state.strokes){
+    if(isHidden(st) || st.id===state.selectedId) continue;
+    cacheCtx.globalAlpha=isLocked(st)?0.32:1;
+    cacheCtx.strokeStyle=st.colour||'#d4d4d8'; cacheCtx.lineWidth=st.thickness||2;
+    cacheCtx.stroke(strokePath(st.segments));
+  }
+  cacheCtx.globalAlpha=1; staticDirty=false;
+}
+function renderPlayback(){
+  for(const st of state.strokes){
+    if(isHidden(st)) continue;
+    const drawEnd=st.timelineStart+st.timelineDuration, fEnd=fullEnd(st);
+    if(state.playhead < st.timelineStart || state.playhead > fEnd) continue;   // appear at start, vanish after hold
+    const lt=clamp((state.playhead-st.timelineStart)/(st.timelineDuration||1),0,1);
+    const ld=clamp((state.playhead-st.timelineStart)/((fEnd-st.timelineStart)||1),0,1);
+    const c=centroid(st);
+    const off={x:lerp(st.offsetStart.x,st.offsetEnd.x,ld)-c.x, y:lerp(st.offsetStart.y,st.offsetEnd.y,ld)-c.y};
+    ctx.save(); ctx.translate(off.x,off.y);
+    ctx.globalAlpha=clamp(opacityAt(st,lt),0,1);
+    ctx.strokeStyle=st.colour||'#eaeaee'; ctx.lineWidth=st.thickness||2.2;
+    drawTrimmed(flatten(st.segments,18), lt);
+    ctx.restore(); ctx.globalAlpha=1;
+  }
+}
+function renderCanvas(){
+  ctx.clearRect(0,0,state.canvas.w,state.canvas.h);
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  if(state.playing){ renderPlayback(); renderOverlay(); renderStats(); return; }
+
+  // resting: blit cached non-selected strokes, then draw selected live on top
+  if(staticDirty) rebuildCache();
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+  ctx.drawImage(cacheCanvas,0,0); ctx.restore();
+
+  if(state.recording){
+    const raw=state.recording.raw;
+    ctx.strokeStyle='#3a6f86'; ctx.lineWidth=1.5; ctx.beginPath();
+    ctx.moveTo(raw[0].x,raw[0].y); for(const p of raw) ctx.lineTo(p.x,p.y); ctx.stroke();
+  }
+  const st=selected();
+  if(st && !isHidden(st)){
+    const w=st.thickness||2, path=strokePath(st.segments);
+    ctx.globalAlpha=isLocked(st)?0.5:1;
+    ctx.strokeStyle=var_accent(); ctx.lineWidth=w+3; ctx.stroke(path);   // selection halo
+    ctx.strokeStyle=st.colour||'#d4d4d8'; ctx.lineWidth=w; ctx.stroke(path);
+    ctx.globalAlpha=1;
+    if(state.hoverNode>=0 && st.nodes[state.hoverNode]){
+      const q=nodePathPos(st,st.nodes[state.hoverNode]);
+      ctx.fillStyle=nodeColor(state.hoverNode,st.nodes.length);
+      ctx.beginPath(); ctx.arc(q.x,q.y,3.2,0,7); ctx.fill();
+    }
+  }
+  renderOverlay();
+  renderStats();
+}
+function var_accent(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#6ad1ff'; }
+
+function renderOverlay(){
+  let svg=`<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/></marker></defs>`;
+  // live marquee
+  if(state.boxSel){
+    const b=state.boxSel, x=Math.min(b.x0,b.x1), y=Math.min(b.y0,b.y1), w=Math.abs(b.x1-b.x0), h=Math.abs(b.y1-b.y0);
+    svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(106,209,255,.08)" stroke="#6ad1ff" stroke-dasharray="4 3" stroke-width="1"/>`;
+  }
+  // strokes captured by the last box-select, awaiting "group"
+  for(const id of state.marquee){
+    const st=state.strokes.find(s=>s.id===id); if(!st) continue; const bb=strokeBBox(st);
+    svg+=`<rect x="${bb.x0-3}" y="${bb.y0-3}" width="${bb.x1-bb.x0+6}" height="${bb.y1-bb.y0+6}" rx="3" fill="none" stroke="#6ad1ff" stroke-width="1" opacity=".6"/>`;
+  }
+  const st=selected();
+  if(st && editable(st) && !state.playing){
+    const a=st.offsetStart, b=st.offsetEnd, moved=Math.hypot(b.x-a.x,b.y-a.y)>1;
+    if(moved) svg+=`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#ffb454" stroke-width="2" marker-end="url(#ah)"/>`;
+    svg+=`<circle data-handle="driftStart" cx="${a.x}" cy="${a.y}" r="8" fill="rgba(106,209,255,.15)" stroke="#6ad1ff" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
+    svg+=`<circle data-handle="driftEnd" cx="${b.x}" cy="${b.y}" r="8" fill="rgba(255,180,84,.18)" stroke="#ffb454" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
+    if(!moved) svg+=`<text x="${a.x+13}" y="${a.y-9}" fill="#6e6e76" font-size="9" font-family="monospace">drag ▸ to add drift</text>`;
+    if(state.hoverNode>=0 && st.nodes[state.hoverNode]){
+      const q=nodePathPos(st,st.nodes[state.hoverNode]);
+      svg+=`<circle cx="${q.x}" cy="${q.y}" r="7" fill="none" stroke="#fff" stroke-width="1.5"/>`;
+    }
+  }
+  overlay.innerHTML=svg;
+}
+function renderStats(){
+  const st=selected();
+  stats.textContent = `${state.strokes.length} stroke${state.strokes.length!==1?'s':''}`
+    + (st?` · selected: ${st.nodes.length} nodes · ${st.segments.length} segments`:'')
+    + ` · ${totalDuration().toFixed(2)}s`;
+}
+
+/* ----------------------------------------------------------------------------
+   5) NODE GRAPH RENDERER — scatter plot, draggable nodes, opacity curve
+   ------------------------------------------------------------------------- */
+const GPL=38, GPR=16, GPT=30, GPB=24; // plot padding (left/right/top/bottom)
+function gW(){ return graph.clientWidth; }
+function gH(){ return graph.clientHeight; }
+function gx(t){ return GPL + clamp(t,0,1)*(gW()-GPL-GPR); }
+function gy(op){ return GPT + (1-clamp(op,0,1))*(gH()-GPT-GPB); }
+function ginvT(px){ return clamp((px-GPL)/((gW()-GPL-GPR)||1),0,1); }
+function ginvOp(py){ return clamp(1-(py-GPT)/((gH()-GPT-GPB)||1),0,1); }
+const snap=(v,targets,tol)=>{ for(const t of targets) if(Math.abs(v-t)<tol) return t; return v; };
+
+function smoothGraphPath(pts){
+  if(pts.length<2){ return pts.length?`M ${pts[0].x} ${pts[0].y}`:''; }
+  let d=`M ${pts[0].x} ${pts[0].y}`;
+  for(let i=0;i<pts.length-1;i++){
+    const p0=pts[i-1]||pts[i], p1=pts[i], p2=pts[i+1], p3=pts[i+2]||p2;
+    d+=` C ${p1.x+(p2.x-p0.x)/6} ${p1.y+(p2.y-p0.y)/6} ${p2.x-(p3.x-p1.x)/6} ${p2.y-(p3.y-p1.y)/6} ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+// map a normalized t to a position on the path (for added nodes' highlight)
+function nodeAtT(st,t){
+  const n=st.segments.length, f=clamp(t,0,1)*n, si=Math.min(Math.floor(f),n-1);
+  return {segmentIndex:si, segmentT:clamp(f-si,0,1)};
+}
+function renderGraph(){
+  const st=selected();
+  const W=gW(), H=gH(), x0=gx(0), x1=gx(1), y0=gy(0), y1=gy(1);
+  let svg=`<rect x="${GPL}" y="${GPT}" width="${(W-GPL-GPR)}" height="${(H-GPT-GPB)}" fill="#0b0b0d"/>`;
+  // opacity gridlines + % labels (y)
+  for(const v of [0,0.25,0.5,0.75,1]){
+    svg+=`<line x1="${x0}" y1="${gy(v)}" x2="${x1}" y2="${gy(v)}" stroke="#17171c"/>
+          <text x="${GPL-5}" y="${gy(v)+3}" fill="#46464d" font-size="8" text-anchor="end" font-family="monospace">${Math.round(v*100)}</text>`;
+  }
+  // time gridlines + second labels (x) — real seconds when a stroke is selected
+  for(const v of [0,0.25,0.5,0.75,1]){
+    const sec = st ? st.timelineStart + v*st.timelineDuration : v;
+    svg+=`<line x1="${gx(v)}" y1="${y1}" x2="${gx(v)}" y2="${y0}" stroke="#17171c"/>
+          <text x="${gx(v)}" y="${H-GPB+12}" fill="#46464d" font-size="8" text-anchor="middle" font-family="monospace">${st?fmt(sec)+'s':v}</text>`;
+  }
+  svg+=`<text x="${GPL-30}" y="${GPT+8}" fill="#6e6e76" font-size="8" font-family="monospace" transform="rotate(-90 ${GPL-30} ${GPT+8})">opacity %</text>`;
+
+  if(st && st.nodes.length){
+    const sorted=[...st.nodes].map((n,i)=>({n,i})).sort((a,b)=>a.n.t-b.n.t);
+    const curve=sorted.map(o=>({x:gx(o.n.t),y:gy(o.n.opacity)}));
+    const line=smoothGraphPath(curve);
+    // filled envelope under the curve
+    svg+=`<path d="${line} L ${curve[curve.length-1].x} ${y0} L ${curve[0].x} ${y0} Z" fill="#6ad1ff" opacity="0.07"/>`;
+    svg+=`<path d="${line}" fill="none" stroke="#4f93ab" stroke-width="1.6"/>`;
+    // playhead (during playback)
+    if(state.playing){
+      const lt=clamp((state.playhead-st.timelineStart)/(st.timelineDuration||1),0,1);
+      if(state.playhead>=st.timelineStart) svg+=`<line x1="${gx(lt)}" y1="${y1}" x2="${gx(lt)}" y2="${y0}" stroke="#6ad1ff" stroke-width="1" opacity=".7"/>`;
+    }
+    st.nodes.forEach((n,i)=>{
+      const hov=i===state.hoverNode;
+      svg+=`<circle data-node="${i}" cx="${gx(n.t)}" cy="${gy(n.opacity)}" r="${hov?7.5:6}"
+              fill="${nodeColor(i,st.nodes.length)}" stroke="${hov?'#fff':'#0b0b0d'}" stroke-width="1.5" style="cursor:grab"/>`;
+    });
+  } else {
+    const msg = st ? 'locked — unlock its group to edit' : 'select a stroke to shape its fade';
+    svg+=`<text x="${W/2}" y="${H/2}" fill="#3a3a40" font-size="10" text-anchor="middle" font-family="monospace">${msg}</text>`;
+  }
+  graph.innerHTML=svg;
+}
+
+function graphNodeIndex(e){
+  const idx=e.target.getAttribute && e.target.getAttribute('data-node');
+  return (idx!==null && idx!==undefined && idx!=='') ? +idx : -1;
+}
+graph.addEventListener('pointerdown', e=>{
+  const st=selected(); if(!editable(st)) return;
+  const idx=graphNodeIndex(e);
+  if(idx>=0){ pushHistory(); state.drag={kind:'node', index:idx}; state.hoverNode=idx; }
+});
+graph.addEventListener('pointermove', e=>{
+  if(state.drag){ if(state.drag.kind==='node') graph.style.cursor='grabbing'; return; }
+  const st=selected(); if(!editable(st)){ graph.style.cursor='default'; return; }
+  const p=localPt(e,graph);
+  let best=-1,bd=15*15;
+  st.nodes.forEach((n,i)=>{ const dx=gx(n.t)-p.x,dy=gy(n.opacity)-p.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} });
+  graph.style.cursor = best>=0 ? 'grab' : 'copy';
+  if(best!==state.hoverNode){ state.hoverNode=best; renderGraph(); renderOverlay(); }
+});
+graph.addEventListener('pointerleave', ()=>{ if(state.hoverNode!==-1 && !state.drag){ state.hoverNode=-1; renderGraph(); renderOverlay(); } });
+graph.addEventListener('dblclick', e=>{
+  const st=selected(); if(!editable(st)) return;
+  const idx=graphNodeIndex(e);
+  if(idx>=0){                                   // remove node (keep at least 2)
+    if(st.nodes.length<=2) return;
+    pushHistory(); st.nodes.splice(idx,1); state.hoverNode=-1; renderGraph(); renderCanvas();
+  } else {                                       // add a node at the click
+    const p=localPt(e,graph), t=ginvT(p.x), op=ginvOp(p.y);
+    pushHistory();
+    st.nodes.push({ t, opacity:op, ...nodeAtT(st,t) });
+    renderGraph(); renderCanvas();
+  }
+});
+
+function dragNode(e){
+  const st=selected(); if(!editable(st)) return;
+  const n=st.nodes[state.drag.index]; if(!n) return;
+  const p=localPt(e,graph);
+  n.t=snap(ginvT(p.x), [0,0.25,0.5,0.75,1], 0.015);          // light snap to time gridlines
+  n.opacity=snap(ginvOp(p.y), [0,0.25,0.5,0.75,1], 0.03);     // and opacity gridlines
+  renderGraph(); renderCanvas();
+}
+
+/* ----------------------------------------------------------------------------
+   6) TIMELINE RENDERER — bars (start/duration/hold), ruler, playhead
+   ------------------------------------------------------------------------- */
+// The animation runs until the last stroke finishes. A stroke with holdToEnd
+// stays "present but not animating" right up to that end; one whose hold edge was
+// dragged uses its explicit holdDuration.
+function animEnd(){
+  let e=0.5;
+  for(const s of state.strokes){
+    e=Math.max(e, s.timelineStart+s.timelineDuration);
+    if(!s.holdToEnd) e=Math.max(e, s.timelineStart+s.timelineDuration+s.holdDuration);
+  }
+  return e;
+}
+function fullEnd(st){ return st.holdToEnd ? animEnd() : st.timelineStart+st.timelineDuration+st.holdDuration; }
+function totalDuration(){ return animEnd(); }
+const TL={ rowH:22, padL:8, padR:16 };
+function tlWidth(){ return tlScroll.clientWidth || 800; }
+function tlView(){ return Math.max(totalDuration()*1.08, 2); }
+function tlPps(){ return (tlWidth()-TL.padL-TL.padR)/tlView(); }
+function tlX(t){ return TL.padL + t*tlPps(); }
+function tlInvX(px){ return Math.max(0,(px-TL.padL)/tlPps()); }
+
+// Build the timeline row list: ungrouped ("active") strokes on top, then each
+// group (collapsed → one dimmed row; expanded → header + faded member rows).
+function tlRows(){
+  const rows=[];
+  state.strokes.forEach(st=>{ if(!st.groupId) rows.push({type:'stroke', st}); });
+  state.groups.forEach(g=>{
+    const members=state.strokes.filter(s=>s.groupId===g.id);
+    if(!members.length) return;
+    rows.push({type:'group', g, members});
+    if(!g.collapsed) members.forEach(st=>rows.push({type:'member', st, g}));
+  });
+  return rows;
+}
+const fmt=s=>(s<10?s.toFixed(1):Math.round(s).toString());
+
+function renderRuler(){
+  const W=tlWidth(), view=tlView(); let svg='';
+  const step = view>16?4 : view>8?2 : view>4?1 : 0.5;
+  for(let t=0;t<=view+1e-6;t+=step){
+    const x=tlX(t);
+    svg+=`<line x1="${x.toFixed(1)}" y1="12" x2="${x.toFixed(1)}" y2="18" stroke="#33333a"/>
+          <text x="${(x+3).toFixed(1)}" y="11" fill="#6e6e76" font-size="9" font-family="monospace">${fmt(t)}s</text>`;
+  }
+  if(state.playing){ const x=tlX(state.playhead); svg+=`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="18" stroke="#6ad1ff" stroke-width="1.2"/>`; }
+  tlRuler.innerHTML=svg;
+}
+
+function barSegments(st, y, h){
+  const x0=tlX(st.timelineStart), x1=tlX(st.timelineStart+st.timelineDuration),
+        x2=tlX(fullEnd(st));
+  return {x0,x1,x2,y,h};
+}
+function renderTimeline(){
+  renderRuler();
+  const rows=tlRows(), W=tlWidth();
+  const H=Math.max(rows.length*TL.rowH+8, tlScroll.clientHeight||0);
+  tlSvg.setAttribute('height', H); tlSvg.setAttribute('width', W);
+  let svg='';
+  // faint per-second gridlines behind the rows
+  const view=tlView(), step = view>16?4 : view>8?2 : view>4?1 : 0.5;
+  for(let t=0;t<=view+1e-6;t+=step){ const x=tlX(t); svg+=`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" stroke="#141417"/>`; }
+
+  rows.forEach((row,i)=>{
+    const y=4+i*TL.rowH, h=TL.rowH-6;
+    if(row.type==='group'){
+      const g=row.g;
+      const s0=Math.min(...row.members.map(m=>m.timelineStart));
+      const s1=Math.max(...row.members.map(m=>fullEnd(m)));
+      const x0=tlX(s0), x1=tlX(s1);
+      const sel=state.selectedGroupId===g.id;
+      svg+=`<rect data-group="${g.id}" x="${x0.toFixed(1)}" y="${y}" width="${Math.max(10,x1-x0).toFixed(1)}" height="${h}" rx="3"
+              fill="hsl(${g.hue} 45% 30%)" opacity="${g.hidden?0.18:0.4}" stroke="${sel?'#fff':'none'}" stroke-width="${sel?1:0}"/>`;
+      svg+=`<text data-group="${g.id}" x="${(x0+6).toFixed(1)}" y="${y+h/2+3}" fill="#cfcfd6" font-size="10" font-family="monospace" style="cursor:pointer">${g.collapsed?'▸':'▾'} ${g.name}${g.locked?' 🔒':''}${g.hidden?' (hidden)':''} · ${row.members.length}</text>`;
+      return;
+    }
+    const st=row.st, member=row.type==='member';
+    const {x0,x1,x2}=barSegments(st,y,h);
+    const sel=st.id===state.selectedId && !member;
+    const dim = member ? 0.35 : 1;
+    // hold segment (faint)
+    svg+=`<rect ${member?'':'data-bar="'+st.id+'"'} x="${x1.toFixed(1)}" y="${y}" width="${Math.max(0,x2-x1).toFixed(1)}" height="${h}" rx="2"
+            fill="${strokeHueColor(st,28)}" opacity="${(sel?.6:.35)*dim}"/>`;
+    // duration segment (solid)
+    svg+=`<rect ${member?'':'data-bar="'+st.id+'"'} x="${x0.toFixed(1)}" y="${y}" width="${Math.max(2,x1-x0).toFixed(1)}" height="${h}" rx="2"
+            fill="${strokeHueColor(st,sel?60:46)}" opacity="${dim}" stroke="${sel?'#fff':'none'}" stroke-width="${sel?1:0}"/>`;
+    // section labels (seconds) when there's room
+    if(!member){
+      const dw=x1-x0, holdLen=fullEnd(st)-(st.timelineStart+st.timelineDuration);
+      if(dw>34) svg+=`<text x="${(x0+4).toFixed(1)}" y="${y+h/2+3}" fill="#0b0b0d" font-size="9" font-family="monospace" style="pointer-events:none">${fmt(st.timelineDuration)}s</text>`;
+      if(x2-x1>30) svg+=`<text x="${(x1+3).toFixed(1)}" y="${y+h/2+3}" fill="#8a8a92" font-size="9" font-family="monospace" style="pointer-events:none">+${fmt(holdLen)}${st.holdToEnd?' →end':''}</text>`;
+      svg+=`<text x="${(x0-3).toFixed(1)}" y="${y+h/2+3}" fill="#46464d" font-size="8" font-family="monospace" text-anchor="end" style="pointer-events:none">${fmt(st.timelineStart)}</text>`;
+    }
+  });
+  if(state.playing){ const x=tlX(state.playhead); svg+=`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" stroke="#6ad1ff" stroke-width="1.2"/>`; }
+  tlSvg.innerHTML=svg;
+}
+
+// edge hit-test → which part of a bar the pointer is over ('barDur'|'barHold'|'bar')
+function tlBarKind(st, px){
+  const x1=tlX(st.timelineStart+st.timelineDuration), x2=tlX(fullEnd(st));
+  if(Math.abs(px-x2)<5) return 'barHold';
+  if(Math.abs(px-x1)<5) return 'barDur';
+  return 'bar';
+}
+tlSvg.addEventListener('pointerdown', e=>{
+  const gid=e.target.getAttribute && e.target.getAttribute('data-group');
+  if(gid){ const g=state.groups.find(x=>x.id===gid); if(g){ selectGroup(g.id); } return; }
+  const id=e.target.getAttribute && e.target.getAttribute('data-bar');
+  if(!id) return;
+  const st=state.strokes.find(s=>s.id===id); if(!st || isLocked(st)) return;
+  selectStroke(id);
+  const p=localPt(e,tlSvg);
+  pushHistory();
+  state.drag={kind:tlBarKind(st,p.x), id, grab:p.x-tlX(st.timelineStart)};
+});
+tlSvg.addEventListener('pointermove', e=>{
+  if(state.drag) return;
+  const id=e.target.getAttribute && e.target.getAttribute('data-bar');
+  if(!id){ tlSvg.style.cursor=e.target.getAttribute&&e.target.getAttribute('data-group')?'pointer':'default'; return; }
+  const st=state.strokes.find(s=>s.id===id); if(!st){ tlSvg.style.cursor='default'; return; }
+  const p=localPt(e,tlSvg); const k=tlBarKind(st,p.x);
+  tlSvg.style.cursor = (k==='barDur'||k==='barHold') ? 'ew-resize' : 'grab';
+});
+function dragBar(e,d){
+  const st=state.strokes.find(s=>s.id===d.id); if(!st) return;
+  const p=localPt(e,tlSvg);
+  if(d.kind==='bar'){ st.timelineStart=+tlInvX(p.x-d.grab).toFixed(3); tlSvg.style.cursor='grabbing'; }
+  else if(d.kind==='barDur'){ st.timelineDuration=+Math.max(0.1, tlInvX(p.x)-st.timelineStart).toFixed(3); tlSvg.style.cursor='ew-resize'; }
+  else if(d.kind==='barHold'){ st.holdToEnd=false; st.holdDuration=+Math.max(0, tlInvX(p.x)-st.timelineStart-st.timelineDuration).toFixed(3); tlSvg.style.cursor='ew-resize'; }
+  renderTimeline(); renderStats();
+}
+
+/* ----------------------------------------------------------------------------
+   7) ANIMATION ENGINE — requestAnimationFrame playback
+   ------------------------------------------------------------------------- */
+let lastTs=0;
+function tick(ts){
+  if(!state.playing) return;
+  const dt=(ts-lastTs)/1000; lastTs=ts;
+  state.playhead+=dt;
+  const total=totalDuration();
+  if(state.playhead>total) state.playhead=0;     // loop
+  renderCanvas(); renderTimeline(); renderGraph();
+  requestAnimationFrame(tick);
+}
+function play(){
+  if(state.strokes.length===0) return;
+  state.playing=true; state.playhead=0; lastTs=performance.now();
+  document.getElementById('playBtn').textContent='❚❚ pause';
+  requestAnimationFrame(tick);
+}
+function pause(){
+  state.playing=false;
+  document.getElementById('playBtn').textContent='▶ play';
+  renderCanvas(); renderTimeline();
+}
+document.getElementById('playBtn').onclick=()=> state.playing?pause():play();
+document.getElementById('clearBtn').onclick=()=>{
+  if(!state.strokes.length || confirm('Clear all strokes?')){
+    pushHistory();
+    state.strokes=[]; state.groups=[]; state.selectedId=null; state.selectedGroupId=null;
+    pause(); afterMutation();
+  }
+};
+document.getElementById('undoBtn').onclick=undo;
+document.getElementById('redoBtn').onclick=redo;
+document.getElementById('boxBtn').onclick=()=> setTool(state.tool==='box'?'draw':'box');
+document.getElementById('groupBtn').onclick=()=> makeGroup(state.marquee);
+document.getElementById('deleteBtn').onclick=deleteSelected;
+
+// brush controls — snapshot once at the start of an edit session, mutate live
+let brushPending=false;
+function brushBegin(){ if(!brushPending){ pushHistory(); brushPending=true; } }
+document.getElementById('thickness').oninput=(e)=>{
+  brushBegin();
+  const v=+e.target.value;
+  state.brush.thickness=v;                       // becomes the default for new strokes
+  document.getElementById('thickVal').textContent=v.toFixed(1);
+  const st=selected(); if(st && editable(st)){ st.thickness=v; invalidateCache(); renderCanvas(); }
+};
+document.getElementById('thickness').onchange=()=>{ brushPending=false; };
+document.getElementById('colour').oninput=(e)=>{
+  brushBegin();
+  const v=e.target.value;
+  state.brush.colour=v;
+  const st=selected(); if(st && editable(st)){ st.colour=v; invalidateCache(); renderCanvas(); }
+};
+document.getElementById('colour').onchange=()=>{ brushPending=false; };
+
+// groups panel — row select toggles collapse; inline buttons lock/hide/ungroup
+document.getElementById('groupsList').addEventListener('click', e=>{
+  const t=e.target, gid=id=>state.groups.find(g=>g.id===id);
+  const lk=t.getAttribute('data-glock'); if(lk){ toggleLock(gid(lk)); return; }
+  const hd=t.getAttribute('data-ghide'); if(hd){ toggleHide(gid(hd)); return; }
+  const dl=t.getAttribute('data-gdel'); if(dl){ ungroup(gid(dl)); return; }
+  const row=t.closest('.grow'); if(row){ const g=gid(row.getAttribute('data-gsel')); if(g){ g.collapsed=!g.collapsed; selectGroup(g.id); } }
+});
+
+// keyboard shortcuts
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  const meta=e.ctrlKey||e.metaKey;
+  if(meta && e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
+  else if(meta && e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); }
+  else if((e.key==='Delete'||e.key==='Backspace') && selected()){ e.preventDefault(); deleteSelected(); }
+  else if(e.key==='Escape' && state.tool==='box'){ setTool('draw'); }
+});
+
+function renderGroups(){
+  const list=document.getElementById('groupsList'), count=document.getElementById('groupCount');
+  count.textContent = state.groups.length ? state.groups.length+'' : '';
+  if(!state.groups.length){
+    list.innerHTML=`<div class="empty">no groups yet.<br>use <b>▢ select</b> to box some strokes, then <b>＋ group</b> to lock them together.</div>`;
+    return;
+  }
+  let html='';
+  state.groups.forEach(g=>{
+    const members=state.strokes.filter(s=>s.groupId===g.id).length;
+    const sel=state.selectedGroupId===g.id;
+    html+=`<div class="grow ${sel?'sel':''}" data-gsel="${g.id}">
+      <span class="swatch" style="background:hsl(${g.hue} 55% 55%)"></span>
+      <span class="gname">${g.name}</span><span class="gmeta">${members}</span>
+      <button class="gbtn ${g.locked?'on':''}" data-glock="${g.id}" title="${g.locked?'locked — click to unlock':'unlocked — click to lock'}">${g.locked?'🔒':'🔓'}</button>
+      <button class="gbtn ${g.hidden?'':'on'}" data-ghide="${g.id}" title="${g.hidden?'hidden — click to show':'visible — click to hide'}">${g.hidden?'🚫':'👁'}</button>
+      <button class="gbtn" data-gdel="${g.id}" title="ungroup">✕</button>
+    </div>`;
+  });
+  list.innerHTML=html;
+}
+
+/* ----------------------------------------------------------------------------
+   8) RIVE EXPORTER — from-scratch .riv binary writer
+   Format verified against rive-app/rive-runtime (header/ToC, field types,
+   core defs, importer indexing). See plan for the full key reference.
+   ------------------------------------------------------------------------- */
+const FPS=60;
+const RIVE_FILE_ID=1;
+
+// core type keys
+const T={ Backboard:23, Artboard:1, Shape:3, PointsPath:16, CubicVertex:6,
+          Stroke:24, SolidColor:18, TrimPath:47, LinearAnimation:31,
+          KeyedObject:25, KeyedProperty:26, KeyFrameDouble:30 };
+// property keys
+const P={ name:4, parentId:5, width:7, height:8, x:13, y:14, opacity:18,
+          vx:24, vy:25, color:37, thickness:47, cap:48, join:49,
+          inRot:84, inDist:85, outRot:86, outDist:87,
+          trimStart:114, trimEnd:115, trimOffset:116, trimMode:117,
+          animName:55, fps:56, duration:57, loop:59,
+          objectId:51, propertyKey:53, frame:67, interp:68, value:70 };
+// ToC backing-type codes
+const C={ uint:0, bool:0, str:1, dbl:2, color:3 };
+
+// "#rrggbb" -> Rive 0xAARRGGBB (always fully opaque). Defaults to white.
+function hexToRiveColor(hex){
+  const h=(hex||'#ffffff').replace('#','');
+  const r=parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
+  return ((0xff<<24)|(r<<16)|(g<<8)|b)>>>0;
+}
+
+function exportRiv(strokes, W, H){
+  const body=[];                 // byte stream (object section)
+  const toc=new Map();           // propertyKey -> backing-type code
+  const enc=new TextEncoder();
+
+  const u8=b=>body.push(b&0xff);
+  const varuint=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; body.push(b); }while(n); };
+  const u32le=n=>{ n=n>>>0; body.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  const f32=v=>{ const a=new Uint8Array(4); new DataView(a.buffer).setFloat32(0,v,true); body.push(a[0],a[1],a[2],a[3]); };
+  const str=s=>{ const b=enc.encode(s); varuint(b.length); for(const c of b) body.push(c); };
+
+  const obj=typeKey=>varuint(typeKey);
+  const end=()=>varuint(0);
+  const pUint =(k,v)=>{ toc.set(k,C.uint);  varuint(k); varuint(v); };
+  const pBool =(k,v)=>{ toc.set(k,C.bool);  varuint(k); u8(v?1:0); };
+  const pStr  =(k,v)=>{ toc.set(k,C.str);   varuint(k); str(v); };
+  const pDbl  =(k,v)=>{ toc.set(k,C.dbl);   varuint(k); f32(v); };
+  const pColor=(k,v)=>{ toc.set(k,C.color); varuint(k); u32le(v); };
+
+  // ---- object section -------------------------------------------------------
+  obj(T.Backboard); end();                                  // not part of artboard index space
+
+  obj(T.Artboard);                                          // artboard == m_Objects[0]
+    pStr(P.name,'Main'); pDbl(P.width,W); pDbl(P.height,H);
+  end();
+
+  let next=1;                                               // next artboard-object index
+  // animation length + per-stroke presence end (matches the editor's holdToEnd model)
+  let aEnd=0.1;
+  for(const s of strokes){
+    aEnd=Math.max(aEnd, s.timelineStart+s.timelineDuration);
+    if(!s.holdToEnd) aEnd=Math.max(aEnd, s.timelineStart+s.timelineDuration+(s.holdDuration||0));
+  }
+  const strokeEnd = s => s.holdToEnd ? aEnd : s.timelineStart+s.timelineDuration+(s.holdDuration||0);
+  const total=aEnd;
+  const durFrames=Math.max(1, Math.ceil(total*FPS));
+  const meta=[];                                            // per-stroke {shape, trim, centroid}
+
+  // Emit shapes in REVERSE array order: the Rive importer paints earlier-declared
+  // drawables on top, so reversing makes the runtime's stacking match the editor
+  // (later-drawn strokes sit on top).
+  strokes.map((st,si)=>({st,si})).reverse().forEach(({st,si})=>{
+    const c=centroid(st);
+
+    // Shape
+    const SHAPE=next++;
+    obj(T.Shape); pStr(P.name,`Stroke_${si+1}`); pUint(P.parentId,0); pDbl(P.opacity,1); end();
+
+    // PointsPath (child of shape)
+    const PATH=next++;
+    obj(T.PointsPath); pUint(P.parentId,SHAPE); end();
+
+    // Vertices (CubicDetachedVertex) — knots of the polybezier.
+    // Guard against a perfectly axis-aligned (zero-area) path: Rive's trim/stroke
+    // tessellation drops a path whose bounding box has zero width or height, so a
+    // dead-straight vertical/horizontal stroke would vanish. Nudge one knot a
+    // sub-pixel to keep the box non-degenerate (imperceptible).
+    const knots=knotsFromSegments(st.segments);
+    let bx0=Infinity,by0=Infinity,bx1=-Infinity,by1=-Infinity;
+    for(const k of knots){ bx0=Math.min(bx0,k.p.x);by0=Math.min(by0,k.p.y);bx1=Math.max(bx1,k.p.x);by1=Math.max(by1,k.p.y); }
+    const nudgeW=(bx1-bx0)<0.1, nudgeH=(by1-by0)<0.1;
+    knots.forEach((k,ki)=>{
+      next++;
+      const last=ki===knots.length-1;
+      obj(T.CubicVertex);
+        pUint(P.parentId,PATH);
+        pDbl(P.vx, k.p.x + (last&&nudgeW?0.12:0)); pDbl(P.vy, k.p.y + (last&&nudgeH?0.12:0));
+        pDbl(P.inRot,k.inRot);   pDbl(P.inDist,k.inDist);
+        pDbl(P.outRot,k.outRot); pDbl(P.outDist,k.outDist);
+      end();
+    });
+
+    // Stroke paint (child of shape) + SolidColor + TrimPath — use the stroke's
+    // chosen width + colour (from the toolbar), defaulting for headless callers.
+    const STROKE=next++;
+    obj(T.Stroke);
+      pUint(P.parentId,SHAPE); pDbl(P.thickness, st.thickness ?? 4); pUint(P.cap,1); pUint(P.join,1);
+    end();
+
+    next++; // SolidColor
+    obj(T.SolidColor); pUint(P.parentId,STROKE); pColor(P.color, hexToRiveColor(st.colour)); end();
+
+    const TRIM=next++;
+    obj(T.TrimPath);
+      pUint(P.parentId,STROKE);
+      pDbl(P.trimStart,0); pDbl(P.trimEnd,0); pDbl(P.trimOffset,0); pUint(P.trimMode,1); // 1=sequential
+    end();
+
+    meta.push({st,c,SHAPE,TRIM});
+  });
+
+  // ---- animation section ----------------------------------------------------
+  obj(T.LinearAnimation);
+    pStr(P.animName,'Play'); pUint(P.fps,FPS); pUint(P.duration,durFrames); pUint(P.loop,1);
+  end();
+
+  const kf=(frame,val)=>{ obj(T.KeyFrameDouble); pUint(P.frame,frame); pUint(P.interp,1); pDbl(P.value,val); end(); };
+  const keyedProp=(propKey, frames)=>{
+    obj(T.KeyedProperty); pUint(P.propertyKey,propKey); end();
+    strictlyIncreasing(frames).forEach(([f,v])=>kf(f,v));
+  };
+
+  meta.forEach(m=>{
+    const st=m.st;
+    const fStart=Math.round(st.timelineStart*FPS);
+    const fDraw =Math.round((st.timelineStart+st.timelineDuration)*FPS);
+    const fEnd  =Math.round(strokeEnd(st)*FPS);     // end of "present" (hold) — may be the animation end
+
+    // trimEnd on the TrimPath: 0 -> 1 across the draw duration
+    obj(T.KeyedObject); pUint(P.objectId,m.TRIM); end();
+      keyedProp(P.trimEnd, [[fStart,0],[Math.max(fDraw,fStart+1),1]]);
+
+    // opacity + drift on the Shape (one KeyedObject, multiple KeyedProperties)
+    obj(T.KeyedObject); pUint(P.objectId,m.SHAPE); end();
+      const opK = st.nodes
+        .map(n=>[Math.round((st.timelineStart+n.t*st.timelineDuration)*FPS), clamp(n.opacity,0,1)])
+        .sort((a,b)=>a[0]-b[0]);
+      const lastOp = opK.length ? opK[opK.length-1][1] : 1;
+      opK.push([fEnd, lastOp]);                      // hold the final opacity through the present/hold section
+      if(fEnd<durFrames) opK.push([fEnd+1, 0]);      // then disappear (unless it already runs to the animation end)
+      keyedProp(P.opacity, opK);
+      const drift = Math.abs(st.offsetStart.x-st.offsetEnd.x)>0.01 || Math.abs(st.offsetStart.y-st.offsetEnd.y)>0.01;
+      if(drift){
+        keyedProp(P.x, [[fStart, st.offsetStart.x-m.c.x],[Math.max(fEnd,fStart+1), st.offsetEnd.x-m.c.x]]);
+        keyedProp(P.y, [[fStart, st.offsetStart.y-m.c.y],[Math.max(fEnd,fStart+1), st.offsetEnd.y-m.c.y]]);
+      }
+  });
+
+  // ---- header + ToC + assemble ---------------------------------------------
+  const head=[];
+  const hVar=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; head.push(b); }while(n); };
+  const hU32=n=>{ n=n>>>0; head.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  head.push(0x52,0x49,0x56,0x45);            // "RIVE"
+  hVar(7); hVar(0); hVar(RIVE_FILE_ID);      // major 7, minor 0, fileId
+  const keys=[...toc.keys()].sort((a,b)=>a-b);
+  for(const k of keys) hVar(k);
+  hVar(0);                                   // ToC terminator
+  let word=0;                                // bitmap: 4 keys per uint32 (bits 0,2,4,6)
+  for(let i=0;i<keys.length;i++){
+    word |= (toc.get(keys[i])&3) << ((i%4)*2);
+    if(i%4===3){ hU32(word); word=0; }
+  }
+  if(keys.length%4!==0) hU32(word);
+
+  return new Uint8Array(head.concat(body));
+}
+
+// Convert polybezier segments into CubicDetachedVertex knots (x,y + polar in/out handles)
+function knotsFromSegments(segments){
+  const knots=[];
+  const pts=[segments[0].p0, ...segments.map(s=>s.p1)];   // n+1 knots
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i];
+    let inRot=0,inDist=0,outRot=0,outDist=0;
+    if(i<segments.length){ const o=V.sub(segments[i].cp1,p);  outDist=V.len(o); outRot=Math.atan2(o.y,o.x); }
+    if(i>0){               const n=V.sub(segments[i-1].cp2,p);inDist=V.len(n);  inRot=Math.atan2(n.y,n.x); }
+    knots.push({p,inRot,inDist,outRot,outDist});
+  }
+  return knots;
+}
+// enforce strictly increasing frame numbers (preserves retrace ordering by value)
+function strictlyIncreasing(frames){
+  const out=[]; let last=-1;
+  for(const [f,v] of frames){ const ff=Math.max(f,last+1); out.push([ff,v]); last=ff; }
+  return out;
+}
+
+document.getElementById('exportBtn').onclick=()=>{
+  if(state.strokes.length===0){ alert('Draw a stroke first.'); return; }
+  const bytes=exportRiv(state.strokes, state.canvas.w, state.canvas.h);
+  const blob=new Blob([bytes],{type:'application/octet-stream'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='animation.riv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+/* ----------------------------------------------------------------------------
+   bootstrap
+   ------------------------------------------------------------------------- */
+function renderAll(){ renderCanvas(); renderGraph(); renderTimeline(); renderGroups(); }
+function onResize(){ fitCanvas(); renderAll(); }
+window.addEventListener('resize', onResize);
+setTool('draw');
+updateUndoButtons();
+fitCanvas();
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digital Palette</title>
+<style>
+  :root{
+    --bg:#0a0a0b; --ink:#e7e7ec; --muted:#8a8a93; --dim:#46464d; --line:#1d1d21;
+    --mono:"SFMono-Regular",ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:
+    radial-gradient(1200px 700px at 50% -10%, #14141a 0%, var(--bg) 60%);
+    color:var(--ink);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:980px;margin:0 auto;padding:54px 20px 80px;text-align:center}
+  h1{font-size:34px;letter-spacing:.04em;margin:0 0 6px;font-weight:600}
+  h1 .dot{color:#6ad1ff}
+  .sub{color:var(--muted);font-size:13px;letter-spacing:.05em;margin:0 0 6px}
+  .hint{color:var(--dim);font-size:12px;margin:2px 0 26px}
+
+  .stage{position:relative;width:min(640px,92vw);margin:0 auto;aspect-ratio:640/480}
+  .stage svg{position:absolute;inset:0;width:100%;height:100%;filter:drop-shadow(0 30px 50px rgba(0,0,0,.55))}
+
+  /* paint dabs sit on top of the palette as links */
+  .dab{position:absolute;transform:translate(-50%,-50%);width:13.5%;aspect-ratio:1;border-radius:50%;
+    display:grid;place-items:center;cursor:pointer;transition:transform .18s cubic-bezier(.2,.8,.2,1),filter .18s;
+    background:radial-gradient(circle at 34% 30%, rgba(255,255,255,.55), rgba(255,255,255,0) 42%), var(--c);
+    box-shadow:inset 0 -6px 14px rgba(0,0,0,.35), 0 6px 16px rgba(0,0,0,.4), 0 0 0 1px rgba(0,0,0,.25);}
+  .dab.live:hover{transform:translate(-50%,-50%) scale(1.13);filter:saturate(1.15) brightness(1.06)}
+  .dab.soon{cursor:default;background:
+    radial-gradient(circle at 34% 30%, rgba(255,255,255,.06), rgba(255,255,255,0) 45%);
+    border:1px dashed #34343c;box-shadow:inset 0 0 14px rgba(0,0,0,.5)}
+  .dab .tip{position:absolute;top:-40px;left:50%;transform:translateX(-50%) translateY(4px);
+    white-space:nowrap;background:#121217;border:1px solid var(--line);border-radius:6px;
+    padding:5px 9px;font-size:11px;color:var(--ink);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s}
+  .dab .tip b{color:#fff}.dab .tip span{color:var(--muted)}
+  .dab:hover .tip{opacity:1;transform:translateX(-50%) translateY(0)}
+  .dab.soon .tip b{color:var(--muted)}
+
+  .legend{margin-top:30px;color:var(--dim);font-size:11px;line-height:1.7}
+  .legend b{color:var(--muted)}
+  footer{margin-top:34px;color:var(--dim);font-size:11px}
+  footer a{color:var(--muted);border-bottom:1px solid #26262c}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Digital&nbsp;Palette<span class="dot">.</span></h1>
+  <p class="sub">a palette of small tools for digital design</p>
+  <p class="hint">pick a colour — each dab is a project</p>
+
+  <div class="stage" id="stage">
+    <svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="board" cx="42%" cy="34%" r="80%">
+          <stop offset="0%"  stop-color="#26262d"/>
+          <stop offset="55%" stop-color="#191920"/>
+          <stop offset="100%" stop-color="#101015"/>
+        </radialGradient>
+        <radialGradient id="hole" cx="50%" cy="42%" r="60%">
+          <stop offset="0%" stop-color="#000"/>
+          <stop offset="100%" stop-color="#0a0a0b"/>
+        </radialGradient>
+      </defs>
+      <!-- palette body -->
+      <path d="M120 150
+               C 150 70, 300 36, 430 60
+               C 560 84, 624 168, 600 268
+               C 580 352, 470 392, 372 372
+               C 318 361, 300 388, 300 412
+               C 300 448, 250 466, 196 452
+               C 96 426, 36 330, 44 250
+               C 50 196, 80 168, 120 150 Z"
+            fill="url(#board)" stroke="#2c2c34" stroke-width="1.5"/>
+      <!-- subtle rim highlight -->
+      <path d="M120 150 C 150 70, 300 36, 430 60 C 520 78, 580 128, 595 192"
+            fill="none" stroke="rgba(255,255,255,.06)" stroke-width="2"/>
+      <!-- thumb hole -->
+      <ellipse cx="225" cy="372" rx="34" ry="30" fill="url(#hole)" stroke="#000" stroke-opacity=".6"/>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <b>Stroke</b> · draw mouse strokes and export them as real Rive animations.<br>
+    grey wells are reserved for projects still drying.
+  </div>
+
+  <footer>
+    one repo, one folder per tool ·
+    <a href="https://github.com/Cillian-Cooke/Digital-Palette">github.com/Cillian-Cooke/Digital-Palette</a>
+  </footer>
+</div>
+
+<script>
+// Each dab = a project. Add a new tool by dropping its folder in and adding a row here.
+// x / y are percentages within the palette stage; colour is the paint.
+const projects = [
+  { name:"Stroke", blurb:"draw → Rive animations", colour:"#6ad1ff", href:"./stroke/", x:33, y:26 },
+  { name:"coming soon", blurb:"a well waiting for paint", colour:"#ffb454", x:50, y:20, soon:true },
+  { name:"coming soon", blurb:"a well waiting for paint", colour:"#8ee06a", x:66, y:25, soon:true },
+  { name:"coming soon", blurb:"a well waiting for paint", colour:"#ff6ad1", x:78, y:38, soon:true },
+  { name:"coming soon", blurb:"a well waiting for paint", colour:"#b98cff", x:72, y:54, soon:true },
+  { name:"coming soon", blurb:"a well waiting for paint", colour:"#ffd166", x:55, y:58, soon:true },
+];
+const stage = document.getElementById('stage');
+for(const p of projects){
+  const el = document.createElement(p.soon ? 'div' : 'a');
+  el.className = 'dab ' + (p.soon ? 'soon' : 'live');
+  el.style.left = p.x + '%';
+  el.style.top  = p.y + '%';
+  el.style.setProperty('--c', p.colour);
+  if(!p.soon) el.href = p.href;
+  el.innerHTML = `<span class="tip"><b>${p.name}</b> &nbsp;<span>${p.blurb}</span></span>`;
+  stage.appendChild(el);
+}
+</script>
+</body>
+</html>

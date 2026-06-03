@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stroke — .riv validator (dev only)</title>
+<!-- Real Rive WebGL/canvas runtime from CDN. NOT used by the shipped app;
+     this page exists only to prove exported .riv files actually load + play. -->
+<script src="https://unpkg.com/@rive-app/canvas@2.21.6"></script>
+<style>
+  body{margin:0;background:#0a0a0b;color:#d9d9dd;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+  header{padding:14px 18px;border-bottom:1px solid #1d1d21}
+  main{display:flex;gap:18px;padding:18px;flex-wrap:wrap}
+  #drop{border:1px dashed #2a2a30;border-radius:8px;padding:26px;flex:1;min-width:260px;text-align:center;color:#6e6e76}
+  #drop.over{border-color:#6ad1ff;color:#d9d9dd}
+  canvas{background:#070708;border:1px solid #1d1d21;border-radius:8px}
+  #log{white-space:pre-wrap;background:#0e0e10;border:1px solid #1d1d21;border-radius:8px;padding:12px;min-width:280px;flex:1;min-height:120px}
+  .ok{color:#7ee787}.err{color:#ff7b72}.muted{color:#6e6e76}
+  input[type=file]{color:#6e6e76}
+  a{color:#6ad1ff}
+</style>
+</head>
+<body>
+<header>
+  <strong>Stroke .riv validator</strong>
+  <span class="muted">— loads a file with the real Rive runtime and plays animation "Play"</span>
+</header>
+<main>
+  <div id="drop">
+    <p>drop <code>animation.riv</code> here, or pick a file:</p>
+    <input id="file" type="file" accept=".riv,application/octet-stream">
+  </div>
+  <canvas id="c" width="520" height="380"></canvas>
+  <div id="log"></div>
+</main>
+<script>
+const logEl=document.getElementById('log');
+const log=(msg,cls)=>{ const s=document.createElement('span'); if(cls)s.className=cls; s.textContent=msg+'\n'; logEl.appendChild(s); };
+let current=null;
+
+async function loadBytes(buf){
+  logEl.textContent='';
+  const bytes=new Uint8Array(buf);
+  log(`file: ${bytes.length} bytes`);
+  // quick header sanity-check
+  const magic=String.fromCharCode(bytes[0],bytes[1],bytes[2],bytes[3]);
+  log(`magic: "${magic}" ${magic==='RIVE'?'✓':'✗ (expected RIVE)'}`, magic==='RIVE'?'ok':'err');
+  if(!window.rive || !rive.Rive){ log('Rive runtime failed to load from CDN (offline?).','err'); return; }
+
+  if(current){ try{ current.cleanup(); }catch(e){} current=null; }
+  const canvas=document.getElementById('c');
+  current=new rive.Rive({
+    buffer: buf,
+    canvas,
+    autoplay:true,
+    onLoad:()=>{
+      log('onLoad ✓ — file parsed by the Rive runtime','ok');
+      try{
+        log('artboards: '+(current.contents?.artboards?.map(a=>a.name).join(', ')||'(n/a)'));
+        const names=current.animationNames||[];
+        log('animations: '+(names.join(', ')||'(none)'));
+        current.resizeDrawingSurfaceToCanvas();
+        if(names.includes('Play')) current.play('Play');
+        log('playing ✓ — drawing-on (trim), opacity + drift should be visible','ok');
+      }catch(e){ log('post-load note: '+e.message,'muted'); }
+    },
+    onLoadError:(e)=>{ log('onLoadError ✗ — runtime rejected the file:','err'); log(String(e&&e.message||e),'err'); }
+  });
+}
+
+document.getElementById('file').addEventListener('change', async e=>{
+  const f=e.target.files[0]; if(f) loadBytes(await f.arrayBuffer());
+});
+const drop=document.getElementById('drop');
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop', async e=>{ const f=e.dataTransfer.files[0]; if(f) loadBytes(await f.arrayBuffer()); });
+</script>
+</body>
+</html>
