@@ -9,6 +9,7 @@ each colour dab links to a project.
 | Colour | Project | What it does |
 |--------|---------|--------------|
 | 🔵 cyan | **[stroke/](stroke/)** | Draw mouse strokes (with live paint preview, line smoothing, and a pickable canvas size) and export them as real Rive (`.riv`) animations, with an animation-speed (easing) editor, global transparency, timeline, groups, and undo. |
+| 🟠 amber | **[grid/](grid/)** | A grid of the same Rive logo at random 90° rotations that you paint with the cursor — cells draw on to the finished logo near the pointer and slowly reverse away behind it. Live controls for grid size, logo scale, reach, and speeds. |
 | ⚪ | *more drying…* | empty wells on the palette are reserved for future tools. |
 
 ## Running

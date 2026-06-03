@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grid</title>
+<style>
+  :root{ --bg:#0a0a0b; --muted:#6e6e76; --dim:#3a3a40; --accent:#6ad1ff;
+    --mono:"SFMono-Regular",ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:
+    radial-gradient(1100px 720px at 50% 50%, #131318 0%, var(--bg) 70%);}
+  #stage{position:fixed;inset:0;display:block}
+  .note{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+    font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted);
+    pointer-events:none;transition:opacity .6s ease;user-select:none;text-align:center;line-height:1.6}
+  .note.gone{opacity:0}
+
+  #panel{position:fixed;top:14px;left:14px;z-index:10;background:rgba(14,14,18,.82);
+    border:1px solid #26262c;border-radius:8px;padding:10px 12px;backdrop-filter:blur(6px);
+    font-family:var(--mono);font-size:11px;color:var(--muted);user-select:none;min-width:208px}
+  #panel h1{margin:0 0 9px;font-size:10px;letter-spacing:.14em;color:#cfcfd6;font-weight:600;text-transform:uppercase}
+  #panel .row{display:flex;align-items:center;gap:8px;margin:6px 0}
+  #panel .row label{flex:0 0 84px;color:var(--muted)}
+  #panel input[type=range]{flex:1 1 auto;min-width:0;accent-color:var(--accent);cursor:ew-resize;height:14px}
+  #panel .val{flex:0 0 36px;text-align:right;color:#cfcfd6}
+  #panel .tip{margin-top:8px;color:var(--dim);line-height:1.5;font-size:10px}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="panel">
+  <h1>grid · controls</h1>
+  <div class="row"><label>logos / side</label><input id="pGrid"  type="range" min="6"  max="64"  step="1"><span class="val" id="vGrid"></span></div>
+  <div class="row"><label>logo size</label>  <input id="pCell"  type="range" min="6"  max="48"  step="1"><span class="val" id="vCell"></span></div>
+  <div class="row"><label>reach</label>      <input id="pReach" type="range" min="16" max="340" step="2"><span class="val" id="vReach"></span></div>
+  <div class="row"><label>paint speed</label><input id="pFwd"   type="range" min="20" max="400" step="5"><span class="val" id="vFwd"></span></div>
+  <div class="row"><label>fade speed</label> <input id="pRev"   type="range" min="8"  max="300" step="4"><span class="val" id="vRev"></span></div>
+  <div class="tip">move the cursor to paint · cells draw to the finished logo, then slowly reverse away</div>
+</div>
+
+<div id="hint" class="note">loading…</div>
+
+<script type="module">
+"use strict";
+/* ----------------------------------------------------------------------------
+   GRID — a field of the same Rive logo. Moving the cursor "paints": a cell the
+   cursor reaches plays forward to the finished logo (latched, so even a quick
+   pass completes — that's the couple-seconds lag), holds while hovered, then
+   slowly plays back in reverse and disappears once the cursor leaves. Zoom across
+   and you leave a trail of logos that draw on and dissolve behind you.
+
+   The Rive renderer can't draw a different time per cell, so at load we pre-render
+   the animation into a filmstrip of frames (readable 2D canvases); each cell blits
+   the frame for its own playback position. Runtime + .riv are vendored under
+   ./rive and ./logo.riv — serve this folder over http.
+
+   All the knobs are live in the controls panel (top-left).
+   ------------------------------------------------------------------------- */
+let GRID  = 40;     // cells per side
+let CELL  = 16;     // logo size in CSS px (the "scale")
+let REACH = 70;     // px the cursor paints within
+let FWD   = 1.3;    // paint-on speed (progress/sec) — lower = more lag
+let REV   = 0.42;   // reverse/disappear speed (progress/sec) — lower = slower fade
+const GAP = 0;
+const TILE = 96;    // filmstrip frame resolution (square; downscaled to CELL)
+const FRAMES = 48;  // pre-rendered animation frames
+
+let STEP = CELL + GAP, TOTAL = GRID*STEP - GAP;
+function recalcLayout(){ STEP = CELL + GAP; TOTAL = GRID*STEP - GAP; }
+
+const stage = document.getElementById('stage');
+const ctx = stage.getContext('2d');
+const hint = document.getElementById('hint');
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
+
+let vw = 0, vh = 0, mx = -1e5, my = -1e5;   // cursor starts off-screen (grid blank)
+let strip = null, topIdx = FRAMES - 1;       // filmstrip + the "finished logo" frame
+
+// per-cell state: rotation, playback progress (0..1), phase
+//   0 idle · 1 painting-forward (latched) · 2 holding-full · 3 reversing-away
+let rot, prog, phase;
+function rebuildCells(){
+  const n = GRID*GRID;
+  rot = new Float32Array(n); prog = new Float32Array(n); phase = new Uint8Array(n);
+  for (let i = 0; i < n; i++) rot[i] = Math.floor(Math.random()*4) * Math.PI/2;
+}
+rebuildCells();
+
+function resize(){
+  vw = window.innerWidth; vh = window.innerHeight;
+  stage.width = Math.round(vw*DPR); stage.height = Math.round(vh*DPR);
+  stage.style.width = vw+'px'; stage.style.height = vh+'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+window.addEventListener('pointermove', e => {
+  mx = e.clientX; my = e.clientY;
+  if (!hint.classList.contains('gone')) hint.classList.add('gone');
+});
+
+let lastT = 0;
+function gridLoop(ts){
+  const dt = lastT ? Math.min((ts - lastT)/1000, 0.05) : 0; lastT = ts;
+  ctx.clearRect(0, 0, vw, vh);
+  if (strip){
+    const sx = (vw - TOTAL)/2, sy = (vh - TOTAL)/2;
+    const R2 = REACH*REACH;
+    for (let i = 0; i < GRID; i++){
+      const cy = sy + i*STEP + CELL/2;
+      for (let j = 0; j < GRID; j++){
+        const k = i*GRID + j;
+        const cx = sx + j*STEP + CELL/2;
+        const dx = cx - mx, dy = cy - my;
+        const near = (dx*dx + dy*dy) < R2;
+        let ph = phase[k], p = prog[k];
+        if (ph === 0 && near) ph = 1;
+        if (ph === 1){ p += FWD*dt; if (p >= 1){ p = 1; ph = 2; } }   // paint on to finished (latched)
+        if (ph === 2 && !near) ph = 3;                                // hold full while hovered
+        if (ph === 3){
+          if (near){ ph = 1; }                                       // re-painted before it faded
+          else { p -= REV*dt; if (p <= 0){ p = 0; ph = 0; } }         // slowly reverse / disappear
+        }
+        prog[k] = p; phase[k] = ph;
+        if (p <= 0.001) continue;                                     // idle & blank
+        const idx = Math.round(p * topIdx);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(rot[k]);
+        ctx.drawImage(strip[idx], -CELL/2, -CELL/2, CELL, CELL);
+        ctx.restore();
+      }
+    }
+  }
+  requestAnimationFrame(gridLoop);
+}
+
+// alpha coverage of a frame — used to find the frame where the logo is most
+// complete (its finished look). The animation draws on, holds, then blanks on the
+// very last frame, so the timeline end is useless; the peak is what we want.
+function coverageOf(canvas){
+  const d = canvas.getContext('2d').getImageData(0, 0, TILE, TILE).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 12) n++;
+  return n;
+}
+
+/* ---- controls -------------------------------------------------------------*/
+function bindControl(id, valId, get, set, fmt){
+  const el = document.getElementById(id), out = document.getElementById(valId);
+  el.value = get(); out.textContent = fmt(get());
+  el.addEventListener('input', () => { set(+el.value); out.textContent = fmt(+el.value); });
+}
+bindControl('pGrid',  'vGrid',  () => GRID,  v => { GRID = v; recalcLayout(); rebuildCells(); }, v => v);
+bindControl('pCell',  'vCell',  () => CELL,  v => { CELL = v; recalcLayout(); }, v => v);
+bindControl('pReach', 'vReach', () => REACH, v => { REACH = v; }, v => v);
+bindControl('pFwd',   'vFwd',   () => Math.round(FWD*100), v => { FWD = v/100; }, v => (v/100).toFixed(2));
+bindControl('pRev',   'vRev',   () => Math.round(REV*100), v => { REV = v/100; }, v => (v/100).toFixed(2));
+
+(async () => {
+  // Opened straight from disk? Module import + fetch of the .riv/.wasm are blocked
+  // on file:// — this tool must be served over http.
+  if (location.protocol === 'file:'){
+    hint.classList.remove('gone');
+    hint.innerHTML = 'serve this over http, then reload:<br>cd into the repo · <b>python3 -m http.server 8000</b> · open <b>http://localhost:8000/grid/</b>';
+    return;
+  }
+  try {
+    const mod = await import('./rive/canvas_advanced.mjs');
+    const rive = await mod.default({
+      locateFile: f => new URL(f.endsWith('.wasm') ? 'rive/rive.wasm' : 'rive/'+f, location.href).href,
+    });
+    const bytes = new Uint8Array(await (await fetch('./logo.riv')).arrayBuffer());
+    const file = await rive.load(bytes);
+    const artboard = file.defaultArtboard();
+    const la = artboard.animationByIndex(0);
+    const anim = new rive.LinearAnimationInstance(la, artboard);
+    const bounds = artboard.bounds;
+    const durSec = la.duration / la.fps;
+
+    // the one canvas Rive renders into; we copy each posed frame out of it
+    const tile = document.createElement('canvas');
+    tile.width = TILE; tile.height = TILE;
+    const tr = rive.makeRenderer(tile);
+
+    // Pre-render the filmstrip. The renderer batches its draws into tr.H; we run
+    // them ourselves so each posed frame renders + is readable synchronously.
+    const frames = [];
+    for (let k = 0; k < FRAMES; k++){
+      anim.time = (k / (FRAMES - 1)) * durSec;
+      anim.apply(1.0);
+      artboard.advance(0);
+      tr.clear();
+      tr.save();
+      tr.align(rive.Fit.contain, rive.Alignment.center, {minX:0,minY:0,maxX:TILE,maxY:TILE}, bounds);
+      artboard.draw(tr);
+      tr.restore();
+      const H = tr.H; for (const fn of H) fn(); H.length = 0;
+      const c = document.createElement('canvas'); c.width = TILE; c.height = TILE;
+      c.getContext('2d').drawImage(tile, 0, 0);
+      frames.push(c);
+    }
+
+    // "finished logo" = the LAST full-coverage frame (the logo draws on, then
+    // recolours while held at full, then blanks on the very last frame). We want
+    // that final coloured state, not the first frame to merely reach full coverage
+    // nor the blank end. Playback 0 → topIdx draws it on; reversing un-draws it.
+    const cov = frames.map(coverageOf);
+    const maxCov = Math.max(...cov, 1);
+    topIdx = FRAMES - 1;
+    for (let i = FRAMES - 1; i >= 1; i--){ if (cov[i] >= 0.95*maxCov){ topIdx = i; break; } }
+    topIdx = clamp(topIdx, 1, FRAMES - 1);
+
+    strip = frames;
+    hint.textContent = 'move your cursor to paint';
+    requestAnimationFrame(gridLoop);
+  } catch (e){
+    hint.classList.remove('gone');
+    hint.textContent = 'could not start — serve this folder over http (python3 -m http.server) and reload';
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
