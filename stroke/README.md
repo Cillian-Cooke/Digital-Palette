@@ -7,8 +7,15 @@ Draw mouse strokes, shape them into animations, and export a real **Rive**
 
 ## What it does
 
-- **Draw** on the canvas; each stroke is RDP-simplified and fit to a smooth
+- **Draw** on the canvas and **see the paint live** at your chosen colour and
+  width as you go; each finished stroke is RDP-simplified and fit to a smooth
   poly-bézier (Schneider).
+- **Smooth out shaky lines** with the smooth (streamline) slider — it averages
+  the input before fitting, and re-smooths the selected stroke live (its raw
+  input is kept, so smoothing is non-destructive).
+- **Pick the canvas size** (artboard dimensions) with the W × H inputs or a
+  preset; this is also the exported `.riv` size. The artboard is centred and
+  scaled to fit the panel.
 - **Shape the speed** in the animation-speed editor — pick a curvature preset
   (linear, ease in/out, exponential…) or paste in your own `cubic-bezier(…)`,
   and copy a stroke's easing back out.

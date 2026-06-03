@@ -23,8 +23,11 @@
   #app{display:grid;grid-template-rows:1fr 168px;height:100vh;width:100vw}
   #top{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0}
 
-  /* Canvas panel */
-  #canvasPanel{position:relative;border-right:1px solid var(--line);overflow:hidden;background:#070708}
+  /* Canvas panel — the artboard (fixed pixel size) is centred, scaled to fit */
+  #canvasPanel{position:relative;border-right:1px solid var(--line);overflow:hidden;background:#070708;
+    display:flex;align-items:center;justify-content:center}
+  #canvasStage{position:relative;background:#0a0a0b;
+    box-shadow:0 0 0 1px var(--line2), 0 18px 50px rgba(0,0,0,.55)}
   #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
   #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   #stats{position:absolute;bottom:8px;left:10px;color:var(--dim);z-index:5;pointer-events:none}
@@ -55,6 +58,11 @@
   #toolbar input[type=range]{width:78px;accent-color:var(--accent);vertical-align:middle;cursor:ew-resize}
   #toolbar input[type=color]{width:22px;height:18px;padding:0;border:1px solid var(--line2);
     border-radius:3px;background:transparent;cursor:pointer;vertical-align:middle}
+  #toolbar input[type=number]{width:48px;font-family:var(--mono);font-size:11px;color:var(--ink);
+    background:#0c0c0e;border:1px solid var(--line2);border-radius:3px;padding:2px 4px}
+  #toolbar input[type=number]:focus{outline:none;border-color:var(--accent)}
+  #toolbar select{font-family:var(--mono);font-size:11px;color:var(--ink);background:#15151a;
+    border:1px solid var(--line2);border-radius:4px;padding:4px 6px;cursor:pointer;height:26px}
   #toolbar #thickVal{min-width:26px;text-align:right}
   #toolbar .sep{flex-basis:100%;height:0}
 
@@ -87,8 +95,10 @@
 <div id="app">
   <div id="top">
     <div id="canvasPanel">
-      <canvas id="canvas"></canvas>
-      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="canvasStage">
+        <canvas id="canvas"></canvas>
+        <svg id="overlay" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"></svg>
+      </div>
       <div id="canvasHint">draw · click to select · drag body to move · drag arrow to set drift</div>
       <div id="stats"></div>
     </div>
@@ -118,9 +128,26 @@
           <span id="thickVal" class="label">4.0</span></span>
         <span class="ctl"><span class="label">colour</span>
           <input id="colour" type="color" value="#ffffff"></span>
+        <span class="ctl" title="smooth out shaky lines (streamline)"><span class="label">smooth</span>
+          <input id="smooth" type="range" min="0" max="100" step="1" value="50">
+          <span id="smoothVal" class="label">50</span></span>
         <span class="ctl" title="transparency across the whole animation"><span class="label">opacity</span>
           <input id="globalOpacity" type="range" min="0" max="100" step="1" value="100">
           <span id="opacityVal" class="label">100</span></span>
+        <span class="sep"></span>
+        <span class="ctl" title="canvas / artboard size in pixels"><span class="label">canvas</span>
+          <input id="canvasW" type="number" min="64" max="4096" step="1" value="1280">
+          <span class="label">×</span>
+          <input id="canvasH" type="number" min="64" max="4096" step="1" value="720">
+          <button id="canvasApply" title="apply canvas size">set</button></span>
+        <select id="canvasPreset" title="canvas size presets">
+          <option value="">presets…</option>
+          <option value="1280x720">1280 × 720 · 16:9</option>
+          <option value="1920x1080">1920 × 1080 · 16:9</option>
+          <option value="1080x1080">1080 × 1080 · square</option>
+          <option value="1080x1920">1080 × 1920 · story</option>
+          <option value="800x600">800 × 600 · 4:3</option>
+        </select>
       </div>
       <div id="groupsPanel">
         <div class="ghead"><span>groups</span><span id="groupCount" class="gmeta"></span></div>
@@ -154,9 +181,10 @@ const state = {
   playhead: 0,          // seconds
   drag: null,           // {kind, ...}
   recording: null,      // {raw:[{x,y,time}]}
-  canvas: { w: 0, h: 0 },
+  canvas: { w: 1280, h: 720 },   // artboard / drawing size in px (the chosen canvas dimensions)
   transparency: 1,      // global opacity applied across the whole animation (0..1)
-  brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1] },  // defaults for the next stroke
+  // smoothing 0..1: how much shaky input is streamlined before curve-fitting
+  brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1], smoothing: 0.5 },  // defaults for the next stroke
   tool: 'draw',         // 'draw' | 'box'
   groups: [],           // Group[] {id,name,hue,strokeIds:[],locked,hidden,collapsed}
   boxSel: null,         // live marquee {x0,y0,x1,y1}
@@ -174,6 +202,8 @@ function selected(){ return state.strokes.find(s => s.id === state.selectedId) |
 // element refs
 const canvas = document.getElementById('canvas');
 const overlay = document.getElementById('overlay');
+const canvasPanel = document.getElementById('canvasPanel');
+const stage = document.getElementById('canvasStage');
 const easeCurve = document.getElementById('easeCurve');
 const easePresets = document.getElementById('easePresets');
 const easeText = document.getElementById('easeText');
@@ -270,7 +300,14 @@ function strokeEase(st){ return (st && st.easing) || state.brush.easing; }
 /* ----------------------------------------------------------------------------
    2) DRAWING — pointer routing, recording, selection
    ------------------------------------------------------------------------- */
-function localPt(e, el){ const r=el.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+function localPt(e, el){
+  const r=el.getBoundingClientRect();
+  // the canvas/overlay are displayed scaled-to-fit, so map back to artboard pixels
+  if(el===canvas || el===overlay)
+    return { x:(e.clientX-r.left)*(state.canvas.w/(r.width||1)),
+             y:(e.clientY-r.top )*(state.canvas.h/(r.height||1)) };
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
 
 function strokeBBox(st){
   const pts=flatten(st.segments,12); let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
@@ -384,6 +421,45 @@ function dragDrift(e,kind){
   renderOverlay();
 }
 
+/* ----------------------------------------------------------------------------
+   smoothing — streamline shaky input before curve-fitting. A weighted moving
+   average (more passes = smoother), then RDP + Schneider fit at a tolerance
+   that grows with the amount. Endpoints are preserved.
+   ------------------------------------------------------------------------- */
+// keep at most `max` points (evenly strided; first & last preserved)
+function capPoints(pts, max){
+  if(pts.length<=max) return pts;
+  const out=[], step=(pts.length-1)/(max-1);
+  for(let i=0;i<max;i++) out.push(pts[Math.round(i*step)]);
+  return out;
+}
+function smoothPoints(pts, amount){
+  if(amount<=0 || pts.length<3) return pts.map(p=>({x:p.x,y:p.y}));
+  const passes=Math.round(1+amount*5);            // 1..6 averaging passes
+  let p=pts.map(q=>({x:q.x,y:q.y}));
+  for(let k=0;k<passes;k++){
+    const out=[p[0]];
+    for(let i=1;i<p.length-1;i++)
+      out.push({ x:(p[i-1].x+2*p[i].x+p[i+1].x)/4, y:(p[i-1].y+2*p[i].y+p[i+1].y)/4 });
+    out.push(p[p.length-1]);
+    p=out;
+  }
+  return p;
+}
+// raw {x,y}[] -> fitted poly-bezier segments, streamlined by `amount` (0..1)
+function buildSegments(points, amount){
+  const sm=smoothPoints(points, amount);
+  const simp=rdp(sm, 2 + amount*4);
+  const segs=fitCurve(simp.map(p=>({x:p.x,y:p.y})), 4 + amount*12);
+  return segs.length ? segs : fitCurve(points.map(p=>({x:p.x,y:p.y})), 6);
+}
+// re-derive a stroke's geometry from its stored raw input at a new smoothing
+function rebuildStrokeGeometry(st, amount){
+  if(!st.raw || st.raw.length<2) return;
+  st.smoothing=amount;
+  st.segments=buildSegments(st.raw, amount);
+}
+
 function finishRecording(){
   const raw=state.recording.raw;
   // need real movement to make a stroke
@@ -393,17 +469,18 @@ function finishRecording(){
   const t0=raw[0].time;
   const rawDur=Math.max((raw[raw.length-1].time - t0)/1000, 0.05);
 
-  // STEP 1: RDP simplification (keeps timestamps)
-  const simplified = rdp(raw, 2.5);
-  // STEP 2: Schneider cubic-bezier fit
-  const segments = fitCurve(simplified.map(p=>({x:p.x,y:p.y})), 6);
+  // keep the raw input (capped) so the smoothing slider can re-streamline later
+  const rawXY = capPoints(raw.map(p=>({x:p.x,y:p.y})), 600);
+  const smoothing = state.brush.smoothing;
+  const segments = buildSegments(rawXY, smoothing);   // streamline → RDP → Schneider fit
   if(segments.length===0){ renderCanvas(); return; }
 
   const c = centroid({segments});
   pushHistory();
   const stroke = {
     id:uid(), hue:(hueSeed = (hueSeed+67)%360), groupId:null,
-    segments, easing: state.brush.easing.slice(),   // draw-on speed curve
+    segments, raw: rawXY, smoothing,                 // raw kept for re-smoothing
+    easing: state.brush.easing.slice(),   // draw-on speed curve
     thickness: state.brush.thickness, colour: state.brush.colour,
     timelineStart: +(state.strokes.length*0.3).toFixed(3),
     timelineDuration: +Math.max(rawDur,0.4).toFixed(3),
@@ -487,11 +564,15 @@ function syncBrushControls(){
   const st=selected();
   const thick = st ? st.thickness : state.brush.thickness;
   const col   = st ? st.colour    : state.brush.colour;
+  const smooth = (st && st.smoothing!=null) ? st.smoothing : state.brush.smoothing;
   const ti=document.getElementById('thickness'), tv=document.getElementById('thickVal'),
-        ci=document.getElementById('colour');
+        ci=document.getElementById('colour'),
+        si=document.getElementById('smooth'), sv=document.getElementById('smoothVal');
   if(ti) ti.value=thick;
   if(tv) tv.textContent=Number(thick).toFixed(1);
   if(ci) ci.value=col;
+  if(si) si.value=Math.round(smooth*100);
+  if(sv) sv.textContent=Math.round(smooth*100);
   renderEasing();
 }
 
@@ -614,16 +695,20 @@ function maxError(pts,bez,u){
 /* ----------------------------------------------------------------------------
    4) CANVAS RENDERER — strokes, preview, SVG overlay handles & hover
    ------------------------------------------------------------------------- */
-let dpr=1;
+let dpr=1, viewScale=1;       // viewScale = display px per artboard px (for sizing overlay handles)
 const cacheCanvas=document.createElement('canvas');
 const cacheCtx=cacheCanvas.getContext('2d');
 function fitCanvas(){
-  const r=canvas.getBoundingClientRect();
-  state.canvas.w=Math.round(r.width); state.canvas.h=Math.round(r.height);
+  const w=state.canvas.w, h=state.canvas.h;              // artboard size is authoritative
+  const pr=canvasPanel.getBoundingClientRect();
+  const margin=26;
+  viewScale=clamp(Math.min((pr.width-margin)/w, (pr.height-margin)/h), 0.05, 4);
+  if(stage){ stage.style.width=Math.round(w*viewScale)+'px'; stage.style.height=Math.round(h*viewScale)+'px'; }
   dpr=window.devicePixelRatio||1;
-  canvas.width=Math.round(r.width*dpr); canvas.height=Math.round(r.height*dpr);
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+  canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);                      // draw in artboard pixels
   cacheCanvas.width=canvas.width; cacheCanvas.height=canvas.height;
+  overlay.setAttribute('viewBox', `0 0 ${w} ${h}`);       // overlay shares artboard coords
   invalidateCache();
 }
 
@@ -691,9 +776,15 @@ function renderCanvas(){
   ctx.drawImage(cacheCanvas,0,0); ctx.restore();
 
   if(state.recording){
+    // live paint: show the brush colour + width as you draw, before the stroke settles
     const raw=state.recording.raw;
-    ctx.strokeStyle='#3a6f86'; ctx.lineWidth=1.5; ctx.beginPath();
-    ctx.moveTo(raw[0].x,raw[0].y); for(const p of raw) ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.globalAlpha=state.transparency;
+    ctx.strokeStyle=state.brush.colour||'#ffffff';
+    ctx.lineWidth=state.brush.thickness||2;
+    ctx.beginPath(); ctx.moveTo(raw[0].x,raw[0].y);
+    for(const p of raw) ctx.lineTo(p.x,p.y);
+    ctx.stroke();
+    ctx.globalAlpha=1;
   }
   const st=selected();
   if(st && !isHidden(st)){
@@ -710,25 +801,28 @@ function renderCanvas(){
 function var_accent(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#6ad1ff'; }
 
 function renderOverlay(){
+  // overlay coords are artboard pixels; divide on-screen sizes by viewScale so
+  // gizmos stay a constant size no matter how the artboard is scaled to fit
+  const s=1/(viewScale||1), r=8*s, sw=1.5*s, dash=`${4*s} ${3*s}`;
   let svg=`<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
     <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/></marker></defs>`;
   // live marquee
   if(state.boxSel){
     const b=state.boxSel, x=Math.min(b.x0,b.x1), y=Math.min(b.y0,b.y1), w=Math.abs(b.x1-b.x0), h=Math.abs(b.y1-b.y0);
-    svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(106,209,255,.08)" stroke="#6ad1ff" stroke-dasharray="4 3" stroke-width="1"/>`;
+    svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(106,209,255,.08)" stroke="#6ad1ff" stroke-dasharray="${dash}" stroke-width="${s}"/>`;
   }
   // strokes captured by the last box-select, awaiting "group"
   for(const id of state.marquee){
-    const st=state.strokes.find(s=>s.id===id); if(!st) continue; const bb=strokeBBox(st);
-    svg+=`<rect x="${bb.x0-3}" y="${bb.y0-3}" width="${bb.x1-bb.x0+6}" height="${bb.y1-bb.y0+6}" rx="3" fill="none" stroke="#6ad1ff" stroke-width="1" opacity=".6"/>`;
+    const st=state.strokes.find(s2=>s2.id===id); if(!st) continue; const bb=strokeBBox(st);
+    svg+=`<rect x="${bb.x0-3*s}" y="${bb.y0-3*s}" width="${bb.x1-bb.x0+6*s}" height="${bb.y1-bb.y0+6*s}" rx="${3*s}" fill="none" stroke="#6ad1ff" stroke-width="${s}" opacity=".6"/>`;
   }
   const st=selected();
   if(st && editable(st) && !state.playing){
     const a=st.offsetStart, b=st.offsetEnd, moved=Math.hypot(b.x-a.x,b.y-a.y)>1;
-    if(moved) svg+=`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#ffb454" stroke-width="2" marker-end="url(#ah)"/>`;
-    svg+=`<circle data-handle="driftStart" cx="${a.x}" cy="${a.y}" r="8" fill="rgba(106,209,255,.15)" stroke="#6ad1ff" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
-    svg+=`<circle data-handle="driftEnd" cx="${b.x}" cy="${b.y}" r="8" fill="rgba(255,180,84,.18)" stroke="#ffb454" stroke-width="1.5" style="pointer-events:all;cursor:grab"/>`;
-    if(!moved) svg+=`<text x="${a.x+13}" y="${a.y-9}" fill="#6e6e76" font-size="9" font-family="monospace">drag ▸ to add drift</text>`;
+    if(moved) svg+=`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#ffb454" stroke-width="${2*s}" marker-end="url(#ah)"/>`;
+    svg+=`<circle data-handle="driftStart" cx="${a.x}" cy="${a.y}" r="${r}" fill="rgba(106,209,255,.15)" stroke="#6ad1ff" stroke-width="${sw}" style="pointer-events:all;cursor:grab"/>`;
+    svg+=`<circle data-handle="driftEnd" cx="${b.x}" cy="${b.y}" r="${r}" fill="rgba(255,180,84,.18)" stroke="#ffb454" stroke-width="${sw}" style="pointer-events:all;cursor:grab"/>`;
+    if(!moved) svg+=`<text x="${a.x+13*s}" y="${a.y-9*s}" fill="#6e6e76" font-size="${9*s}" font-family="monospace">drag ▸ to add drift</text>`;
   }
   overlay.innerHTML=svg;
 }
@@ -985,6 +1079,22 @@ document.getElementById('colour').oninput=(e)=>{
 };
 document.getElementById('colour').onchange=()=>{ brushPending=false; };
 
+// smoothing — streamline shaky lines. Becomes the default for new strokes, and
+// re-smooths the selected stroke live (from its stored raw input).
+let smoothPending=false;
+document.getElementById('smooth').oninput=(e)=>{
+  const a=clamp(+e.target.value/100, 0, 1);
+  state.brush.smoothing=a;
+  document.getElementById('smoothVal').textContent=e.target.value;
+  const st=selected();
+  if(st && editable(st) && st.raw){
+    if(!smoothPending){ pushHistory(); smoothPending=true; }
+    rebuildStrokeGeometry(st, a);
+    invalidateCache(); renderCanvas();
+  }
+};
+document.getElementById('smooth').onchange=()=>{ smoothPending=false; };
+
 // global transparency — one opacity for the whole animation (preview + export)
 document.getElementById('globalOpacity').oninput=(e)=>{
   state.transparency = clamp(+e.target.value/100, 0, 1);
@@ -992,6 +1102,25 @@ document.getElementById('globalOpacity').oninput=(e)=>{
   invalidateCache();                               // the resting cache bakes in transparency
   renderCanvas(); renderStats();
 };
+
+// canvas size — pick the artboard dimensions (also the exported .riv size)
+function applyCanvasSize(w,h){
+  w=clamp(Math.round(+w)||0, 64, 4096); h=clamp(Math.round(+h)||0, 64, 4096);
+  state.canvas.w=w; state.canvas.h=h;
+  document.getElementById('canvasW').value=w;
+  document.getElementById('canvasH').value=h;
+  fitCanvas(); renderAll();
+}
+document.getElementById('canvasApply').onclick=()=>{
+  applyCanvasSize(document.getElementById('canvasW').value, document.getElementById('canvasH').value);
+};
+document.getElementById('canvasW').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('canvasApply').click(); });
+document.getElementById('canvasH').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('canvasApply').click(); });
+document.getElementById('canvasPreset').addEventListener('change', e=>{
+  const v=e.target.value; e.target.value='';
+  if(!v) return;
+  const [w,h]=v.split('x'); applyCanvasSize(w,h);
+});
 
 // groups panel — row select toggles collapse; inline buttons lock/hide/ungroup
 document.getElementById('groupsList').addEventListener('click', e=>{

@@ -8,7 +8,7 @@ each colour dab links to a project.
 
 | Colour | Project | What it does |
 |--------|---------|--------------|
-| 🔵 cyan | **[stroke/](stroke/)** | Draw mouse strokes and export them as real Rive (`.riv`) animations, with an animation-speed (easing) editor, global transparency, timeline, groups, and undo. |
+| 🔵 cyan | **[stroke/](stroke/)** | Draw mouse strokes (with live paint preview, line smoothing, and a pickable canvas size) and export them as real Rive (`.riv`) animations, with an animation-speed (easing) editor, global transparency, timeline, groups, and undo. |
 | ⚪ | *more drying…* | empty wells on the palette are reserved for future tools. |
 
 ## Running
