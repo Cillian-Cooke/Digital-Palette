@@ -9,21 +9,27 @@
     --mono:"SFMono-Regular",ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden;background:
-    radial-gradient(1100px 720px at 50% 50%, #131318 0%, var(--bg) 70%);}
+    radial-gradient(1100px 720px at 50% 50%, #10140f 0%, var(--bg) 70%);}
   #stage{position:fixed;inset:0;display:block}
   .note{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
     font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted);
     pointer-events:none;transition:opacity .6s ease;user-select:none;text-align:center;line-height:1.6}
   .note.gone{opacity:0}
 
-  #panel{position:fixed;top:14px;left:14px;z-index:10;background:rgba(14,14,18,.82);
-    border:1px solid #26262c;border-radius:8px;padding:10px 12px;backdrop-filter:blur(6px);
-    font-family:var(--mono);font-size:11px;color:var(--muted);user-select:none;min-width:208px}
-  #panel h1{margin:0 0 9px;font-size:10px;letter-spacing:.14em;color:#cfcfd6;font-weight:600;text-transform:uppercase}
+  #panel{position:fixed;top:14px;left:14px;z-index:10;background:rgba(14,16,14,.84);
+    border:1px solid #26302a;border-radius:8px;padding:10px 12px;backdrop-filter:blur(6px);
+    font-family:var(--mono);font-size:11px;color:var(--muted);user-select:none;min-width:226px}
+  #panel h1{margin:0 0 9px;font-size:10px;letter-spacing:.14em;color:#cfead0;font-weight:600;text-transform:uppercase}
   #panel .row{display:flex;align-items:center;gap:8px;margin:6px 0}
   #panel .row label{flex:0 0 84px;color:var(--muted)}
-  #panel input[type=range]{flex:1 1 auto;min-width:0;accent-color:var(--accent);cursor:ew-resize;height:14px}
-  #panel .val{flex:0 0 36px;text-align:right;color:#cfcfd6}
+  #panel input[type=range]{flex:1 1 auto;min-width:0;accent-color:#7fd36a;cursor:ew-resize;height:14px}
+  #panel input[type=text]{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:11px;color:#eaeaea;
+    background:#0c0e0c;border:1px solid #2a342a;border-radius:4px;padding:4px 7px;letter-spacing:.1em}
+  #panel input[type=text]:focus{outline:none;border-color:#7fd36a}
+  #panel .val{flex:0 0 36px;text-align:right;color:#cfead0}
+  #panel button{font-family:var(--mono);font-size:11px;color:var(--muted);background:#11140f;
+    border:1px solid #2a342a;border-radius:4px;padding:4px 9px;cursor:pointer}
+  #panel button:hover{border-color:#7fd36a;color:#eaeaea}
   #panel .tip{margin-top:8px;color:var(--dim);line-height:1.5;font-size:10px}
 </style>
 </head>
@@ -31,13 +37,18 @@
 <canvas id="stage"></canvas>
 
 <div id="panel">
-  <h1>grid · controls</h1>
-  <div class="row"><label>logos / side</label><input id="pGrid"  type="range" min="6"  max="64"  step="1"><span class="val" id="vGrid"></span></div>
-  <div class="row"><label>logo size</label>  <input id="pCell"  type="range" min="6"  max="48"  step="1"><span class="val" id="vCell"></span></div>
-  <div class="row"><label>reach</label>      <input id="pReach" type="range" min="16" max="340" step="2"><span class="val" id="vReach"></span></div>
-  <div class="row"><label>paint speed</label><input id="pFwd"   type="range" min="20" max="400" step="5"><span class="val" id="vFwd"></span></div>
-  <div class="row"><label>fade speed</label> <input id="pRev"   type="range" min="8"  max="300" step="4"><span class="val" id="vRev"></span></div>
-  <div class="tip">move the cursor to paint · cells draw to the finished logo, then slowly reverse away</div>
+  <h1>terrain</h1>
+  <div class="row"><label>trees</label>    <input id="pTree"  type="range" min="0"  max="85"  step="1"><span class="val" id="vTree"></span></div>
+  <div class="row"><label>rocks</label>    <input id="pRock"  type="range" min="0"  max="70"  step="1"><span class="val" id="vRock"></span></div>
+  <div class="row"><label>water</label>    <input id="pWater" type="range" min="0"  max="70"  step="1"><span class="val" id="vWater"></span></div>
+  <div class="row"><label>cols / side</label><input id="pGrid"  type="range" min="12" max="80"  step="1"><span class="val" id="vGrid"></span></div>
+  <div class="row"><label>tile size</label> <input id="pCell"  type="range" min="6"  max="40"  step="1"><span class="val" id="vCell"></span></div>
+  <div class="row"><label>reach</label>     <input id="pReach" type="range" min="16" max="340" step="2"><span class="val" id="vReach"></span></div>
+  <div class="row"><label>grow speed</label><input id="pFwd"   type="range" min="20" max="400" step="5"><span class="val" id="vFwd"></span></div>
+  <div class="row"><label>stagger</label>  <input id="pStag"  type="range" min="0"  max="400" step="5"><span class="val" id="vStag"></span></div>
+  <div class="row"><label>fade out</label> <input id="pFade"  type="range" min="0"  max="150" step="2"><span class="val" id="vFade"></span></div>
+  <div class="row"><button id="pRegen">regenerate</button><button id="pReset">clear</button></div>
+  <div class="tip">move the cursor to grow trees + grass</div>
 </div>
 
 <div id="hint" class="note">loading…</div>
@@ -45,27 +56,25 @@
 <script type="module">
 "use strict";
 /* ----------------------------------------------------------------------------
-   GRID — a field of the same Rive logo. Moving the cursor "paints": a cell the
-   cursor reaches plays forward to the finished logo (latched, so even a quick
-   pass completes — that's the couple-seconds lag), holds while hovered, then
-   slowly plays back in reverse and disappears once the cursor leaves. Zoom across
-   and you leave a trail of logos that draw on and dissolve behind you.
+   GRID — a field of four Rive animations (grass · trees · rocks · water)
+   scattered naturally: a separate smooth value-noise per type lays out organic
+   clumps (forests, rocky patches, ponds) over a grass base, so like sits next to
+   like. Moving the cursor "grows" the field — each tile the cursor reaches plays
+   its grow-in animation forward (latched, so a quick pass still completes), then
+   stays. Each tile is one .riv (no stacking); the feature .rivs include grass.
 
-   The Rive renderer can't draw a different time per cell, so at load we pre-render
-   the animation into a filmstrip of frames (readable 2D canvases); each cell blits
-   the frame for its own playback position. Runtime + .riv are vendored under
-   ./rive and ./logo.riv — serve this folder over http.
-
-   All the knobs are live in the controls panel (top-left).
+   Per cell we can't ask Rive for a different time, so at load each .riv is
+   pre-rendered into a filmstrip of frames; each tile blits the frame for its own
+   growth. Runtime + the four .riv are vendored — serve over http.
    ------------------------------------------------------------------------- */
-let GRID  = 40;     // cells per side
-let CELL  = 16;     // logo size in CSS px (the "scale")
-let REACH = 70;     // px the cursor paints within
-let FWD   = 1.3;    // paint-on speed (progress/sec) — lower = more lag
-let REV   = 0.42;   // reverse/disappear speed (progress/sec) — lower = slower fade
-const GAP = 0;
-const TILE = 96;    // filmstrip frame resolution (square; downscaled to CELL)
-const FRAMES = 48;  // pre-rendered animation frames
+let GRID = 40;          // cols/rows
+let CELL = 16;          // tile size in CSS px
+let REACH = 70;         // px the cursor grows within
+let FWD  = 1.3;         // grow-in speed (progress/sec)
+let STAGGER = 1.4;      // max random start delay (s) so tiles don't all pop at once
+let FADE = 0;           // fade-back speed (0 = the field stays once grown)
+let DTREE = 0.42, DROCK = 0.16, DWATER = 0.14;   // coverage fractions (grass = the rest)
+const GAP = 0, TILE = 96, FRAMES = 48;
 
 let STEP = CELL + GAP, TOTAL = GRID*STEP - GAP;
 function recalcLayout(){ STEP = CELL + GAP; TOTAL = GRID*STEP - GAP; }
@@ -76,18 +85,63 @@ const hint = document.getElementById('hint');
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
 const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 
-let vw = 0, vh = 0, mx = -1e5, my = -1e5;   // cursor starts off-screen (grid blank)
-let strip = null, topIdx = FRAMES - 1;       // filmstrip + the "finished logo" frame
+let vw = 0, vh = 0, mx = -1e5, my = -1e5;
+let strips = null;                     // [grass, trees, rocks, water] each {frames, topIdx}
 
-// per-cell state: rotation, playback progress (0..1), phase
-//   0 idle · 1 painting-forward (latched) · 2 holding-full · 3 reversing-away
-let rot, prog, phase;
+// per-cell state · type: 0 grass · 1 trees · 2 rocks · 3 water
+// st: 0 idle · 1 waiting (random delay) · 2 growing · 3 grown
+let type, grow, flip, spd, dly, wait, st, nTree, nRock, nWater;
 function rebuildCells(){
   const n = GRID*GRID;
-  rot = new Float32Array(n); prog = new Float32Array(n); phase = new Uint8Array(n);
-  for (let i = 0; i < n; i++) rot[i] = Math.floor(Math.random()*4) * Math.PI/2;
+  type = new Uint8Array(n); grow = new Float32Array(n);
+  flip = new Uint8Array(n); spd = new Float32Array(n);
+  dly = new Float32Array(n); wait = new Float32Array(n); st = new Uint8Array(n);
+  for (let i = 0; i < n; i++){
+    flip[i] = Math.random() < 0.5 ? 1 : 0;
+    spd[i]  = 0.7 + Math.random()*0.7;          // varied grow rate
+    dly[i]  = Math.random();                     // 0..1 → scaled by STAGGER when armed
+  }
+  genNoise();
+  applyTypes();
 }
-rebuildCells();
+
+// a smooth value-noise field over the grid: random values on a coarse lattice,
+// smoothstep-interpolated → organic blobs. `clumps` ≈ how many across.
+function makeNoise(clumps){
+  const n = GRID, scale = Math.max(3, Math.round(n/clumps));
+  const gw = Math.floor(n/scale) + 2;
+  const r = new Float32Array(gw*gw);
+  for (let i = 0; i < r.length; i++) r[i] = Math.random();
+  const out = new Float32Array(n*n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++){
+    const fx = x/scale, fy = y/scale, x0 = Math.floor(fx), y0 = Math.floor(fy);
+    let tx = fx-x0, ty = fy-y0; tx = tx*tx*(3-2*tx); ty = ty*ty*(3-2*ty);
+    const v00 = r[y0*gw+x0], v10 = r[y0*gw+x0+1], v01 = r[(y0+1)*gw+x0], v11 = r[(y0+1)*gw+x0+1];
+    out[y*n+x] = v00*(1-tx)*(1-ty) + v10*tx*(1-ty) + v01*(1-tx)*ty + v11*tx*ty;
+  }
+  return out;
+}
+// independent fields → independent clumps (water: fewer, bigger ponds; rocks: smaller)
+function genNoise(){ nTree = makeNoise(7); nRock = makeNoise(9); nWater = makeNoise(5); }
+
+// threshold each field at its density → a terrain type per tile (water > rocks >
+// trees > grass), then drop isolated features so like sits next to like.
+function applyTypes(){
+  const n = GRID;
+  const tT = 1-DTREE, tR = 1-DROCK, tW = 1-DWATER;
+  const raw = new Uint8Array(n*n);
+  for (let k = 0; k < n*n; k++){
+    raw[k] = nWater[k] > tW ? 3 : nRock[k] > tR ? 2 : nTree[k] > tT ? 1 : 0;
+  }
+  const at = (x,y) => (x<0||y<0||x>=n||y>=n) ? 0 : raw[y*n+x];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++){
+    const v = raw[y*n+x];
+    if (v === 0){ type[y*n+x] = 0; continue; }
+    let same = 0;
+    for (let dy=-1; dy<=1; dy++) for (let dx=-1; dx<=1; dx++) if ((dx||dy) && at(x+dx,y+dy) === v) same++;
+    type[y*n+x] = same === 0 ? 0 : v;   // lone feature → grass
+  }
+}
 
 function resize(){
   vw = window.innerWidth; vh = window.innerHeight;
@@ -97,6 +151,7 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 resize();
+rebuildCells();
 
 window.addEventListener('pointermove', e => {
   mx = e.clientX; my = e.clientY;
@@ -107,9 +162,9 @@ let lastT = 0;
 function gridLoop(ts){
   const dt = lastT ? Math.min((ts - lastT)/1000, 0.05) : 0; lastT = ts;
   ctx.clearRect(0, 0, vw, vh);
-  if (strip){
+  if (strips){
     const sx = (vw - TOTAL)/2, sy = (vh - TOTAL)/2;
-    const R2 = REACH*REACH;
+    const R2 = REACH*REACH, h = CELL/2;
     for (let i = 0; i < GRID; i++){
       const cy = sy + i*STEP + CELL/2;
       for (let j = 0; j < GRID; j++){
@@ -117,21 +172,20 @@ function gridLoop(ts){
         const cx = sx + j*STEP + CELL/2;
         const dx = cx - mx, dy = cy - my;
         const near = (dx*dx + dy*dy) < R2;
-        let ph = phase[k], p = prog[k];
-        if (ph === 0 && near) ph = 1;
-        if (ph === 1){ p += FWD*dt; if (p >= 1){ p = 1; ph = 2; } }   // paint on to finished (latched)
-        if (ph === 2 && !near) ph = 3;                                // hold full while hovered
-        if (ph === 3){
-          if (near){ ph = 1; }                                       // re-painted before it faded
-          else { p -= REV*dt; if (p <= 0){ p = 0; ph = 0; } }         // slowly reverse / disappear
-        }
-        prog[k] = p; phase[k] = ph;
-        if (p <= 0.001) continue;                                     // idle & blank
-        const idx = Math.round(p * topIdx);
+        let s = st[k], p = grow[k];
+        if (s === 0 && near){ s = 1; wait[k] = dly[k]*STAGGER; }   // armed → random delay
+        if (s === 1){ wait[k] -= dt; if (wait[k] <= 0) s = 2; }    // staggered wait
+        if (s === 2){ p += FWD*spd[k]*dt; if (p >= 1){ p = 1; s = 3; } }   // grow (latched)
+        if (s === 3 && FADE > 0 && !near){ p -= FADE*dt; if (p <= 0){ p = 0; s = 0; } }  // fade back
+        st[k] = s; grow[k] = p;
+        if (s === 0 || p <= 0.001) continue;
+        const strip = strips[type[k]];
+        const idx = Math.round(p * strip.topIdx);
         ctx.save();
+        ctx.globalAlpha = Math.min(1, p * 2);              // fade in as it grows
         ctx.translate(cx, cy);
-        ctx.rotate(rot[k]);
-        ctx.drawImage(strip[idx], -CELL/2, -CELL/2, CELL, CELL);
+        if (flip[k]) ctx.scale(-1, 1);
+        ctx.drawImage(strip.frames[idx], -h, -h, CELL, CELL);
         ctx.restore();
       }
     }
@@ -139,9 +193,7 @@ function gridLoop(ts){
   requestAnimationFrame(gridLoop);
 }
 
-// alpha coverage of a frame — used to find the frame where the logo is most
-// complete (its finished look). The animation draws on, holds, then blanks on the
-// very last frame, so the timeline end is useless; the peak is what we want.
+// alpha coverage — used to find the frame where a tile is most grown
 function coverageOf(canvas){
   const d = canvas.getContext('2d').getImageData(0, 0, TILE, TILE).data;
   let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 12) n++;
@@ -149,20 +201,24 @@ function coverageOf(canvas){
 }
 
 /* ---- controls -------------------------------------------------------------*/
-function bindControl(id, valId, get, set, fmt){
+function bindRange(id, valId, get, set, fmt){
   const el = document.getElementById(id), out = document.getElementById(valId);
   el.value = get(); out.textContent = fmt(get());
   el.addEventListener('input', () => { set(+el.value); out.textContent = fmt(+el.value); });
 }
-bindControl('pGrid',  'vGrid',  () => GRID,  v => { GRID = v; recalcLayout(); rebuildCells(); }, v => v);
-bindControl('pCell',  'vCell',  () => CELL,  v => { CELL = v; recalcLayout(); }, v => v);
-bindControl('pReach', 'vReach', () => REACH, v => { REACH = v; }, v => v);
-bindControl('pFwd',   'vFwd',   () => Math.round(FWD*100), v => { FWD = v/100; }, v => (v/100).toFixed(2));
-bindControl('pRev',   'vRev',   () => Math.round(REV*100), v => { REV = v/100; }, v => (v/100).toFixed(2));
+bindRange('pTree',  'vTree',  () => Math.round(DTREE*100),  v => { DTREE = v/100; applyTypes(); }, v => v + '%');
+bindRange('pRock',  'vRock',  () => Math.round(DROCK*100),  v => { DROCK = v/100; applyTypes(); }, v => v + '%');
+bindRange('pWater', 'vWater', () => Math.round(DWATER*100), v => { DWATER = v/100; applyTypes(); }, v => v + '%');
+bindRange('pGrid',  'vGrid',  () => GRID,  v => { GRID = v; recalcLayout(); rebuildCells(); }, v => v);
+bindRange('pCell',  'vCell',  () => CELL,  v => { CELL = v; recalcLayout(); }, v => v);
+bindRange('pReach', 'vReach', () => REACH, v => { REACH = v; }, v => v);
+bindRange('pFwd',   'vFwd',   () => Math.round(FWD*100),     v => { FWD = v/100; }, v => (v/100).toFixed(2));
+bindRange('pStag',  'vStag',  () => Math.round(STAGGER*100), v => { STAGGER = v/100; }, v => v ? (v/100).toFixed(2)+'s' : 'off');
+bindRange('pFade',  'vFade',  () => Math.round(FADE*100),    v => { FADE = v/100; }, v => v ? (v/100).toFixed(2) : 'keep');
+document.getElementById('pRegen').addEventListener('click', () => { genNoise(); applyTypes(); });
+document.getElementById('pReset').addEventListener('click', () => { if (grow){ grow.fill(0); st.fill(0); } });
 
 (async () => {
-  // Opened straight from disk? Module import + fetch of the .riv/.wasm are blocked
-  // on file:// — this tool must be served over http.
   if (location.protocol === 'file:'){
     hint.classList.remove('gone');
     hint.innerHTML = 'serve this over http, then reload:<br>cd into the repo · <b>python3 -m http.server 8000</b> · open <b>http://localhost:8000/grid/</b>';
@@ -173,49 +229,42 @@ bindControl('pRev',   'vRev',   () => Math.round(REV*100), v => { REV = v/100; }
     const rive = await mod.default({
       locateFile: f => new URL(f.endsWith('.wasm') ? 'rive/rive.wasm' : 'rive/'+f, location.href).href,
     });
-    const bytes = new Uint8Array(await (await fetch('./logo.riv')).arrayBuffer());
-    const file = await rive.load(bytes);
-    const artboard = file.defaultArtboard();
-    const la = artboard.animationByIndex(0);
-    const anim = new rive.LinearAnimationInstance(la, artboard);
-    const bounds = artboard.bounds;
-    const durSec = la.duration / la.fps;
 
-    // the one canvas Rive renders into; we copy each posed frame out of it
-    const tile = document.createElement('canvas');
-    tile.width = TILE; tile.height = TILE;
-    const tr = rive.makeRenderer(tile);
-
-    // Pre-render the filmstrip. The renderer batches its draws into tr.H; we run
-    // them ourselves so each posed frame renders + is readable synchronously.
-    const frames = [];
-    for (let k = 0; k < FRAMES; k++){
-      anim.time = (k / (FRAMES - 1)) * durSec;
-      anim.apply(1.0);
-      artboard.advance(0);
-      tr.clear();
-      tr.save();
-      tr.align(rive.Fit.contain, rive.Alignment.center, {minX:0,minY:0,maxX:TILE,maxY:TILE}, bounds);
-      artboard.draw(tr);
-      tr.restore();
-      const H = tr.H; for (const fn of H) fn(); H.length = 0;
-      const c = document.createElement('canvas'); c.width = TILE; c.height = TILE;
-      c.getContext('2d').drawImage(tile, 0, 0);
-      frames.push(c);
+    // pre-render one .riv into a filmstrip + the "fully grown" frame index
+    async function prerender(src){
+      const file = await rive.load(new Uint8Array(await (await fetch(src)).arrayBuffer()));
+      const artboard = file.defaultArtboard();
+      const la = artboard.animationByIndex(0);
+      const anim = new rive.LinearAnimationInstance(la, artboard);
+      const durSec = la.duration / la.fps;
+      const tile = document.createElement('canvas'); tile.width = TILE; tile.height = TILE;
+      const tr = rive.makeRenderer(tile);
+      const frames = [];
+      for (let k = 0; k < FRAMES; k++){
+        anim.time = (k / (FRAMES - 1)) * durSec;
+        anim.apply(1.0); artboard.advance(0);
+        tr.clear(); tr.save();
+        tr.align(rive.Fit.contain, rive.Alignment.center, {minX:0,minY:0,maxX:TILE,maxY:TILE}, artboard.bounds);
+        artboard.draw(tr); tr.restore();
+        const H = tr.H; for (const fn of H) fn(); H.length = 0;
+        const c = document.createElement('canvas'); c.width = TILE; c.height = TILE;
+        c.getContext('2d').drawImage(tile, 0, 0);
+        frames.push(c);
+      }
+      const cov = frames.map(coverageOf), maxCov = Math.max(...cov, 1);
+      let top = FRAMES - 1;
+      for (let i = FRAMES - 1; i >= 1; i--){ if (cov[i] >= 0.95*maxCov){ top = i; break; } }
+      return { frames, topIdx: clamp(top, 1, FRAMES - 1) };
     }
 
-    // "finished logo" = the LAST full-coverage frame (the logo draws on, then
-    // recolours while held at full, then blanks on the very last frame). We want
-    // that final coloured state, not the first frame to merely reach full coverage
-    // nor the blank end. Playback 0 → topIdx draws it on; reversing un-draws it.
-    const cov = frames.map(coverageOf);
-    const maxCov = Math.max(...cov, 1);
-    topIdx = FRAMES - 1;
-    for (let i = FRAMES - 1; i >= 1; i--){ if (cov[i] >= 0.95*maxCov){ topIdx = i; break; } }
-    topIdx = clamp(topIdx, 1, FRAMES - 1);
+    strips = [
+      await prerender('./grass.riv'),
+      await prerender('./trees.riv'),
+      await prerender('./rocks.riv'),
+      await prerender('./water.riv'),
+    ];
 
-    strip = frames;
-    hint.textContent = 'move your cursor to paint';
+    hint.textContent = 'move your cursor to grow the field';
     requestAnimationFrame(gridLoop);
   } catch (e){
     hint.classList.remove('gone');

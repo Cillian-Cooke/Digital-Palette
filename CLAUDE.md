@@ -9,9 +9,10 @@ the root `index.html`.
 - **stroke/** — draw mouse strokes → export real `.riv` files (hand-written Rive
   binary writer). Easing editor, global transparency, line smoothing, live paint
   preview, pickable canvas size, timeline, groups, undo.
-- **grid/** — a large grid of one Rive logo you paint with the cursor: cells play
-  forward to the finished logo near the pointer (latched), then reverse/dissolve
-  behind it. Live controls panel for grid size, logo scale, reach, and speeds.
+- **grid/** — a field of four Rive animations (grass · trees · rocks · water)
+  scattered into natural clumps (per-type value-noise) that you grow with the
+  cursor: tiles near the pointer play their grow-in forward (latched) and stay.
+  Live per-type density controls + regenerate.
 
 `**/test.riv` is gitignored (it's a generated fixture). Run the stroke checks:
 `node stroke/selftest.mjs` (structural) and `node stroke/gen.mjs` (writes
@@ -91,12 +92,14 @@ ES-module `import()` and `fetch()` of the `.riv`/`.wasm` are **blocked on
 `location.protocol === 'file:'` and shows a help message instead of failing
 silently. The stroke editor is pure canvas/JS and works from `file://`.
 
-## 5. The bundled animation (grid/logo.riv)
+## 5. The bundled animations (grid/grass · trees · rocks · water .riv)
 
-It's itself a **stroke export**: artboard `Main`, one looping linear animation
-`Play`, ~29.6s (1778 frames @ 60fps). Strokes draw on (trim 0→1) then hold; later
-content shifts colour to green. Swap in any `.riv`; a **square** artboard tiles
-cleanest. To re-derive duration/structure at runtime, log
+All are **stroke exports**: artboard `Main`, one looping linear animation `Play`.
+They draw on (trim 0→1) then hold, then blank on the very last frame — so grid/
+picks the **last full-coverage frame** as "fully grown", never the blank end
+(measure coverage per pre-rendered frame). The feature .rivs already include their
+own grass, so tiles are drawn one-`.riv`-per-cell (no stacking). Swap in any `.riv`;
+a **square** artboard tiles cleanest. To re-derive duration/structure at runtime, log
 `Object.getOwnPropertyNames(Object.getPrototypeOf(obj))` on the wasm wrappers —
 names are minified, so probe at runtime rather than reading the `.mjs`.
 
