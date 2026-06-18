@@ -1601,6 +1601,7 @@ function syncRefImageUI(){
       if(state.refImage?.url) URL.revokeObjectURL(state.refImage.url);
       const opacity=state.refImage?.opacity ?? 0.35;
       state.refImage={img, url, opacity};
+      applyCanvasSize(img.naturalWidth, img.naturalHeight);   // match canvas to image 1:1
       syncRefImageUI();
       renderCanvas();
     };
