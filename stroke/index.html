@@ -834,8 +834,11 @@ function renderPlayback(){
 }
 function drawRefImage(){
   if(!state.refImage) return;
+  const img=state.refImage.img, cw=state.canvas.w, ch=state.canvas.h;
+  const scale=Math.min(cw/img.width, ch/img.height);
+  const dw=img.width*scale, dh=img.height*scale;
   ctx.save(); ctx.globalAlpha=state.refImage.opacity;
-  ctx.drawImage(state.refImage.img, 0, 0, state.canvas.w, state.canvas.h);
+  ctx.drawImage(img, (cw-dw)/2, (ch-dh)/2, dw, dh);
   ctx.restore();
 }
 function renderCanvas(){
