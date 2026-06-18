@@ -20,8 +20,23 @@
   button:active{transform:translateY(1px)}
   .label{color:var(--muted);text-transform:lowercase;letter-spacing:.04em}
 
-  #app{display:grid;grid-template-rows:1fr 168px;height:100vh;width:100vw}
+  #app{display:grid;grid-template-rows:34px 1fr 168px;height:100vh;width:100vw}
   #top{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0}
+
+  /* Tab bar — one tab per open animation; the palette is shared across them all */
+  #tabbar{display:flex;align-items:center;gap:6px;padding:0 8px;background:#0c0c0e;
+    border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
+  #tabs{display:flex;gap:4px;align-items:flex-end;min-width:0}
+  .tab{display:flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid var(--line2);
+    border-bottom:none;border-radius:5px 5px 0 0;background:#101013;color:var(--muted);
+    cursor:pointer;white-space:nowrap;max-height:26px}
+  .tab:hover{color:var(--ink)}
+  .tab.on{border-color:var(--accent);color:#fff;background:#16242b}
+  .tab .tname{max-width:170px;overflow:hidden;text-overflow:ellipsis}
+  .tab .tclose{border:none;background:transparent;color:var(--dim);padding:0;font-size:13px;
+    line-height:1;cursor:pointer}
+  .tab .tclose:hover{color:var(--accent2)}
+  #addTab{flex:0 0 auto;padding:4px 8px}
 
   /* Canvas panel — the artboard (fixed pixel size) is centred, scaled to fit */
   #canvasPanel{position:relative;border-right:1px solid var(--line);overflow:hidden;background:#070708;
@@ -58,6 +73,11 @@
   #toolbar input[type=range]{width:78px;accent-color:var(--accent);vertical-align:middle;cursor:ew-resize}
   #toolbar input[type=color]{width:22px;height:18px;padding:0;border:1px solid var(--line2);
     border-radius:3px;background:transparent;cursor:pointer;vertical-align:middle}
+  #toolbar #palette{display:inline-flex;gap:3px;flex-wrap:wrap;max-width:148px;vertical-align:middle}
+  #toolbar .swatch2{width:15px;height:15px;padding:0;border:1px solid var(--line2);border-radius:3px;cursor:pointer}
+  #toolbar .swatch2:hover{border-color:var(--accent)}
+  #toolbar .swatch2.on{box-shadow:0 0 0 2px var(--accent);border-color:var(--accent)}
+  #toolbar #palAdd{padding:2px 6px;line-height:1}
   #toolbar input[type=number]{width:48px;font-family:var(--mono);font-size:11px;color:var(--ink);
     background:#0c0c0e;border:1px solid var(--line2);border-radius:3px;padding:2px 4px}
   #toolbar input[type=number]:focus{outline:none;border-color:var(--accent)}
@@ -93,13 +113,17 @@
 </head>
 <body>
 <div id="app">
+  <div id="tabbar">
+    <div id="tabs"></div>
+    <button id="addTab" title="new animation (shares the colour palette)">＋ animation</button>
+  </div>
   <div id="top">
     <div id="canvasPanel">
       <div id="canvasStage">
         <canvas id="canvas"></canvas>
         <svg id="overlay" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"></svg>
       </div>
-      <div id="canvasHint">draw · click to select · drag body to move · drag arrow to set drift</div>
+      <div id="canvasHint">draw freely · ↖ select to edit (picks the last stroke) · then click any line · drag body / arrow</div>
       <div id="stats"></div>
     </div>
     <div id="rightRail">
@@ -118,7 +142,8 @@
         <button id="exportBtn">⤓ export</button>
         <button id="undoBtn" title="undo (Ctrl+Z)">↶</button>
         <button id="redoBtn" title="redo (Ctrl+Shift+Z)">↷</button>
-        <button id="boxBtn" title="box-select strokes into a locked group">▢ select</button>
+        <button id="selectBtn" title="select &amp; edit strokes — picks the last drawn stroke, then click any line">↖ select</button>
+        <button id="boxBtn" title="box-select strokes into a locked group">▢ box</button>
         <button id="groupBtn" title="group the box-selected strokes" style="display:none">＋ group</button>
         <button id="deleteBtn" title="delete selected stroke (Del)">🗑</button>
         <button id="clearBtn">clear</button>
@@ -128,6 +153,9 @@
           <span id="thickVal" class="label">4.0</span></span>
         <span class="ctl"><span class="label">colour</span>
           <input id="colour" type="color" value="#ffffff"></span>
+        <span class="ctl" title="shared palette — same swatches on every tab. click to use · right-click to remove"><span class="label">palette</span>
+          <span id="palette"></span>
+          <button id="palAdd" title="add the current colour to the shared palette">＋</button></span>
         <span class="ctl" title="smooth out shaky lines (streamline)"><span class="label">smooth</span>
           <input id="smooth" type="range" min="0" max="100" step="1" value="50">
           <span id="smoothVal" class="label">50</span></span>
@@ -148,6 +176,13 @@
           <option value="1080x1920">1080 × 1920 · story</option>
           <option value="800x600">800 × 600 · 4:3</option>
         </select>
+        <span class="sep"></span>
+        <input type="file" id="refImageInput" accept="image/*" style="display:none">
+        <button id="refImageBtn" title="upload a reference image as a drawing guide — not included in the export">⊞ ref image</button>
+        <span class="ctl" id="refImageCtl" style="display:none"><span class="label">ref</span>
+          <input id="refOpacity" type="range" min="5" max="80" step="5" value="35">
+          <span id="refOpacityVal" class="label">35%</span>
+          <button id="refImageClear" style="padding:2px 6px;line-height:1" title="remove reference image">✕</button></span>
       </div>
       <div id="groupsPanel">
         <div class="ghead"><span>groups</span><span id="groupCount" class="gmeta"></span></div>
@@ -173,27 +208,52 @@
 /* ----------------------------------------------------------------------------
    1) STATE — single source of truth
    ------------------------------------------------------------------------- */
-const state = {
-  strokes: [],          // Stroke[]   (array order = z-order: later = on top)
-  selectedId: null,
-  selectedGroupId: null,
-  playing: false,
-  playhead: 0,          // seconds
-  drag: null,           // {kind, ...}
-  recording: null,      // {raw:[{x,y,time}]}
-  canvas: { w: 1280, h: 720 },   // artboard / drawing size in px (the chosen canvas dimensions)
-  transparency: 1,      // global opacity applied across the whole animation (0..1)
-  // smoothing 0..1: how much shaky input is streamlined before curve-fitting
-  brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1], smoothing: 0.5 },  // defaults for the next stroke
-  tool: 'draw',         // 'draw' | 'box'
-  groups: [],           // Group[] {id,name,hue,strokeIds:[],locked,hidden,collapsed}
-  boxSel: null,         // live marquee {x0,y0,x1,y1}
-  marquee: [],          // stroke ids captured by the last box-select (pending group)
-  history: [],          // undo stack (snapshots)
-  future: [],           // redo stack
-};
+// A "document" is one self-contained animation (its own strokes, groups, canvas,
+// undo history…). The editor keeps several open as tabs; `state` always points at
+// the active one, so the rest of the code keeps reading/writing `state.*` unchanged.
+let docSeed = 0;
+function newDoc(name){
+  return {
+    id: 'doc' + (++docSeed),
+    name: name || ('Animation ' + docSeed),
+    strokes: [],          // Stroke[]   (array order = z-order: later = on top)
+    selectedId: null,
+    selectedGroupId: null,
+    playing: false,
+    playhead: 0,          // seconds
+    drag: null,           // {kind, ...}            (transient UI)
+    recording: null,      // {raw:[{x,y,time}]}     (transient UI)
+    canvas: { w: 1280, h: 720 },   // artboard / drawing size in px (the chosen canvas dimensions)
+    transparency: 1,      // global opacity applied across the whole animation (0..1)
+    refImage: null,       // {img, url, opacity} — drawing guide only, never exported
+    // smoothing 0..1: how much shaky input is streamlined before curve-fitting
+    brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1], smoothing: 0.5 },  // defaults for the next stroke
+    tool: 'draw',         // 'draw' | 'select' | 'box'
+    groups: [],           // Group[] {id,name,hue,strokeIds:[],locked,hidden,collapsed}
+    boxSel: null,         // live marquee {x0,y0,x1,y1}   (transient UI)
+    marquee: [],          // stroke ids captured by the last box-select (pending group)  (transient)
+    history: [],          // undo stack (snapshots)
+    future: [],           // redo stack
+  };
+}
+let documents = [ newDoc('Animation 1') ];
+let activeIndex = 0;
+let state = documents[0];                          // the active document
 let hueSeed = 0;
 let groupSeed = 0;
+
+/* ----------------------------------------------------------------------------
+   shared colour palette — one set of swatches across ALL tabs, persisted in
+   localStorage so it survives reloads and is identical in every animation.
+   ------------------------------------------------------------------------- */
+const PALETTE_KEY = 'dp_stroke_palette';
+const DEFAULT_PALETTE = ['#ffffff','#6ad1ff','#ffb454','#ff5d73','#7cffb2','#b388ff','#222428'];
+function loadPalette(){
+  try{ const s=localStorage.getItem(PALETTE_KEY); if(s){ const a=JSON.parse(s); if(Array.isArray(a)&&a.length) return a; } }catch(_){}
+  return DEFAULT_PALETTE.slice();
+}
+function savePalette(){ try{ localStorage.setItem(PALETTE_KEY, JSON.stringify(palette)); }catch(_){} }
+let palette = loadPalette();
 const uid = () => 's' + Math.random().toString(36).slice(2, 9);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, f) => a + (b - a) * f;
@@ -327,9 +387,12 @@ function strokeHit(pt){
 function setTool(t){
   state.tool=t;
   const bb=document.getElementById('boxBtn'); if(bb) bb.classList.toggle('active', t==='box');
+  const sb=document.getElementById('selectBtn'); if(sb) sb.classList.toggle('active', t==='select');
   if(t!=='box'){ state.boxSel=null; state.marquee=[]; const gb=document.getElementById('groupBtn'); if(gb) gb.style.display='none'; }
+  if(t!=='select') state.selectedId=null;     // selection only lives in the select state
   canvas.style.cursor='crosshair';
-  renderOverlay();
+  syncBrushControls();
+  renderAll();
 }
 
 canvas.addEventListener('pointerdown', e=>{
@@ -338,14 +401,16 @@ canvas.addEventListener('pointerdown', e=>{
     state.boxSel={x0:p.x,y0:p.y,x1:p.x,y1:p.y};
     canvas.setPointerCapture(e.pointerId); return;
   }
-  const hit=strokeHit(p);
-  if(hit){
-    if(hit!==state.selectedId){ selectStroke(hit); return; }
-    const st=selected();                        // already selected → drag body to move
-    if(editable(st)){ pushHistory(); state.drag={kind:'body', id:hit, last:p}; canvas.style.cursor='grabbing'; }
+  if(state.tool==='select'){                    // select state: pick / move strokes, never draw
+    const hit=strokeHit(p);
+    if(hit){
+      if(hit!==state.selectedId){ selectStroke(hit); return; }
+      const st=selected();                      // already selected → drag body to move
+      if(editable(st)){ pushHistory(); state.drag={kind:'body', id:hit, last:p}; canvas.style.cursor='grabbing'; }
+    } else if(state.selectedId){ selectStroke(null); }   // click empty → deselect
     return;
   }
-  state.recording={ raw:[{x:p.x,y:p.y,time:performance.now()}] };   // new stroke
+  state.recording={ raw:[{x:p.x,y:p.y,time:performance.now()}] };   // draw state: always a new stroke
   canvas.setPointerCapture(e.pointerId);
 });
 
@@ -362,9 +427,9 @@ overlay.addEventListener('pointerdown', e=>{
 // hover cursor feedback over the canvas
 canvas.addEventListener('pointermove', e=>{
   if(state.drag||state.recording||state.boxSel) return;
-  if(state.tool==='box'){ canvas.style.cursor='crosshair'; return; }
+  if(state.tool!=='select'){ canvas.style.cursor='crosshair'; return; }   // draw / box: plain crosshair
   const hit=strokeHit(localPt(e,canvas));
-  canvas.style.cursor = hit ? (hit===state.selectedId?'move':'pointer') : 'crosshair';
+  canvas.style.cursor = hit ? (hit===state.selectedId?'move':'pointer') : 'default';
 });
 
 // Centralised move/up so a drag started anywhere keeps tracking off-surface.
@@ -490,7 +555,8 @@ function finishRecording(){
   };
   state.strokes.push(stroke);
   invalidateCache();
-  selectStroke(stroke.id);
+  state.selectedId=null;          // stay unselected — hit ↖ select to edit the last stroke
+  syncBrushControls();
   renderAll();
 }
 
@@ -574,6 +640,7 @@ function syncBrushControls(){
   if(si) si.value=Math.round(smooth*100);
   if(sv) sv.textContent=Math.round(smooth*100);
   renderEasing();
+  renderPalette();          // keep the active swatch highlight in sync
 }
 
 /* ----------------------------------------------------------------------------
@@ -765,9 +832,16 @@ function renderPlayback(){
     ctx.restore(); ctx.globalAlpha=1;
   }
 }
+function drawRefImage(){
+  if(!state.refImage) return;
+  ctx.save(); ctx.globalAlpha=state.refImage.opacity;
+  ctx.drawImage(state.refImage.img, 0, 0, state.canvas.w, state.canvas.h);
+  ctx.restore();
+}
 function renderCanvas(){
   ctx.clearRect(0,0,state.canvas.w,state.canvas.h);
   ctx.lineCap='round'; ctx.lineJoin='round';
+  drawRefImage();
   if(state.playing){ renderPlayback(); renderOverlay(); renderStats(); return; }
 
   // resting: blit cached non-selected strokes, then draw selected live on top
@@ -1000,6 +1074,7 @@ tlSvg.addEventListener('pointerdown', e=>{
   const id=e.target.getAttribute && e.target.getAttribute('data-bar');
   if(!id) return;
   const st=state.strokes.find(s=>s.id===id); if(!st || isLocked(st)) return;
+  if(state.tool!=='select') setTool('select');   // editing a bar means we're in the select state
   selectStroke(id);
   const p=localPt(e,tlSvg);
   pushHistory();
@@ -1056,6 +1131,13 @@ document.getElementById('clearBtn').onclick=()=>{
 };
 document.getElementById('undoBtn').onclick=undo;
 document.getElementById('redoBtn').onclick=redo;
+document.getElementById('selectBtn').onclick=()=>{
+  if(state.tool==='select'){ setTool('draw'); return; }      // toggle back to drawing
+  setTool('select');
+  for(let i=state.strokes.length-1;i>=0;i--){               // auto-pick the last drawn editable stroke
+    if(editable(state.strokes[i])){ selectStroke(state.strokes[i].id); break; }
+  }
+};
 document.getElementById('boxBtn').onclick=()=> setTool(state.tool==='box'?'draw':'box');
 document.getElementById('groupBtn').onclick=()=> makeGroup(state.marquee);
 document.getElementById('deleteBtn').onclick=deleteSelected;
@@ -1076,6 +1158,7 @@ document.getElementById('colour').oninput=(e)=>{
   const v=e.target.value;
   state.brush.colour=v;
   const st=selected(); if(st && editable(st)){ st.colour=v; invalidateCache(); renderCanvas(); }
+  renderPalette();
 };
 document.getElementById('colour').onchange=()=>{ brushPending=false; };
 
@@ -1138,14 +1221,14 @@ window.addEventListener('keydown', e=>{
   if(meta && e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
   else if(meta && e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); }
   else if((e.key==='Delete'||e.key==='Backspace') && selected()){ e.preventDefault(); deleteSelected(); }
-  else if(e.key==='Escape' && state.tool==='box'){ setTool('draw'); }
+  else if(e.key==='Escape' && state.tool!=='draw'){ setTool('draw'); }
 });
 
 function renderGroups(){
   const list=document.getElementById('groupsList'), count=document.getElementById('groupCount');
   count.textContent = state.groups.length ? state.groups.length+'' : '';
   if(!state.groups.length){
-    list.innerHTML=`<div class="empty">no groups yet.<br>use <b>▢ select</b> to box some strokes, then <b>＋ group</b> to lock them together.</div>`;
+    list.innerHTML=`<div class="empty">no groups yet.<br>use <b>▢ box</b> to box some strokes, then <b>＋ group</b> to lock them together.</div>`;
     return;
   }
   let html='';
@@ -1367,20 +1450,184 @@ document.getElementById('exportBtn').onclick=()=>{
   const bytes=exportRiv(state.strokes, state.canvas.w, state.canvas.h, state.transparency);
   const blob=new Blob([bytes],{type:'application/octet-stream'});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download='animation.riv';
+  const a=document.createElement('a'); a.href=url;
+  a.download=((state.name||'animation').trim().replace(/[^\w.-]+/g,'_')||'animation')+'.riv';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 
 /* ----------------------------------------------------------------------------
+   9) TABS — multiple animations open at once; `state` points at the active one.
+   Per-document: strokes, groups, canvas, opacity, undo history. Shared across
+   all tabs: the colour palette (below).
+   ------------------------------------------------------------------------- */
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderTabs(){
+  const c=document.getElementById('tabs'); if(!c) return;
+  c.innerHTML=documents.map((d,i)=>
+    `<div class="tab ${i===activeIndex?'on':''}" data-tab="${i}" title="double-click to rename">
+      <span class="tname" data-tab="${i}">${escapeHtml(d.name)}</span>
+      <span data-tab="${i}" style="color:var(--dim)">${d.strokes.length}</span>
+      <button class="tclose" data-close="${i}" title="close animation">×</button>
+    </div>`).join('');
+}
+
+// reflect the active document's canvas size / opacity / play state into the toolbar
+function syncDocControls(){
+  const cw=document.getElementById('canvasW'), ch=document.getElementById('canvasH'),
+        go=document.getElementById('globalOpacity'), ov=document.getElementById('opacityVal'),
+        pb=document.getElementById('playBtn');
+  if(cw) cw.value=state.canvas.w;
+  if(ch) ch.value=state.canvas.h;
+  const op=Math.round(state.transparency*100);
+  if(go) go.value=op;
+  if(ov) ov.textContent=op;
+  if(pb) pb.textContent = state.playing ? '❚❚ pause' : '▶ play';
+  syncBrushControls();             // thickness / colour / smooth / easing + palette highlight
+  syncRefImageUI();
+}
+
+function setActiveDoc(i){
+  i=clamp(i|0, 0, documents.length-1);
+  const prev=documents[activeIndex];
+  if(prev){ if(prev.playing) pause(); prev.drag=null; prev.recording=null; prev.boxSel=null; prev.marquee=[]; }
+  activeIndex=i;
+  state=documents[i];
+  state.drag=null; state.recording=null; state.boxSel=null; state.marquee=[];
+  syncDocControls();
+  fitCanvas();
+  setTool(state.tool);             // refresh tool buttons + render the scene
+  updateUndoButtons();
+  renderTabs();
+}
+function addDoc(){ documents.push(newDoc()); setActiveDoc(documents.length-1); }
+function closeDoc(i){
+  const d=documents[i]; if(!d) return;
+  if(d.strokes.length && !confirm(`Close "${d.name}"? Its strokes will be lost.`)) return;
+  if(d.refImage?.url) URL.revokeObjectURL(d.refImage.url);
+  documents.splice(i,1);
+  if(!documents.length) documents.push(newDoc('Animation 1'));
+  const ni = i<activeIndex ? activeIndex-1 : Math.min(activeIndex, documents.length-1);
+  activeIndex=-1;                  // avoid pausing/clearing a now-removed doc
+  setActiveDoc(ni);
+}
+function renameDoc(i){
+  const d=documents[i]; if(!d) return;
+  const n=prompt('Animation name:', d.name);
+  if(n!=null){ d.name=n.trim()||d.name; renderTabs(); }
+}
+document.getElementById('addTab').onclick=addDoc;
+document.getElementById('tabs').addEventListener('click', e=>{
+  const cl=e.target.getAttribute&&e.target.getAttribute('data-close');
+  if(cl!==null && cl!==undefined){ e.stopPropagation(); closeDoc(+cl); return; }
+  const t=e.target.getAttribute&&e.target.getAttribute('data-tab');
+  if(t!==null && t!==undefined) setActiveDoc(+t);
+});
+document.getElementById('tabs').addEventListener('dblclick', e=>{
+  const t=e.target.getAttribute&&e.target.getAttribute('data-tab');
+  if(t!==null && t!==undefined) renameDoc(+t);
+});
+
+/* ----------------------------------------------------------------------------
+   shared palette UI — click a swatch to paint with it, ＋ to add the current
+   colour, right-click to remove. Same swatches on every tab (localStorage).
+   ------------------------------------------------------------------------- */
+function renderPalette(){
+  const el=document.getElementById('palette'); if(!el) return;
+  const cur=(state.brush.colour||'').toLowerCase();
+  el.innerHTML=palette.map(c=>
+    `<button class="swatch2 ${c.toLowerCase()===cur?'on':''}" data-swatch="${c}" title="${c} · right-click to remove" style="background:${c}"></button>`).join('');
+}
+// set the colour on the selected stroke (if any) and remember it as the brush default
+function applyColour(hex){
+  const st=selected();
+  if(st && editable(st)){ pushHistory(); st.colour=hex; invalidateCache(); }
+  state.brush.colour=hex;
+  const ci=document.getElementById('colour'); if(ci) ci.value=hex;
+  renderCanvas(); renderPalette();
+}
+(function wirePalette(){
+  const el=document.getElementById('palette');
+  if(el){
+    el.addEventListener('click', e=>{ const c=e.target.getAttribute&&e.target.getAttribute('data-swatch'); if(c) applyColour(c); });
+    el.addEventListener('contextmenu', e=>{
+      const c=e.target.getAttribute&&e.target.getAttribute('data-swatch'); if(!c) return;
+      e.preventDefault(); palette=palette.filter(x=>x.toLowerCase()!==c.toLowerCase()); savePalette(); renderPalette();
+    });
+  }
+  const add=document.getElementById('palAdd');
+  if(add) add.onclick=()=>{
+    const hex=(state.brush.colour||'#ffffff').toLowerCase();
+    if(!palette.some(c=>c.toLowerCase()===hex)){ palette.push(hex); savePalette(); }
+    renderPalette();
+  };
+  // another browser tab edited the palette → pick up the change live
+  window.addEventListener('storage', e=>{ if(e.key===PALETTE_KEY){ palette=loadPalette(); renderPalette(); } });
+})();
+
+/* ----------------------------------------------------------------------------
+   10) REFERENCE IMAGE — semi-transparent drawing guide; lives in state only,
+   never written to the .riv export.
+   ------------------------------------------------------------------------- */
+function syncRefImageUI(){
+  const has=!!state.refImage;
+  const btn=document.getElementById('refImageBtn'), ctl=document.getElementById('refImageCtl');
+  if(btn) btn.style.display=has?'none':'';
+  if(ctl) ctl.style.display=has?'':'none';
+  if(has){
+    const pct=Math.round(state.refImage.opacity*100);
+    const ro=document.getElementById('refOpacity'), rv=document.getElementById('refOpacityVal');
+    if(ro) ro.value=pct;
+    if(rv) rv.textContent=pct+'%';
+  }
+}
+(function wireRefImage(){
+  const input=document.getElementById('refImageInput');
+  const btn=document.getElementById('refImageBtn');
+  const clearBtn=document.getElementById('refImageClear');
+  const opSlider=document.getElementById('refOpacity');
+  const opVal=document.getElementById('refOpacityVal');
+  if(!input||!btn) return;
+  btn.onclick=()=>input.click();
+  input.onchange=(e)=>{
+    const file=e.target.files[0]; if(!file) return;
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      if(state.refImage?.url) URL.revokeObjectURL(state.refImage.url);
+      const opacity=state.refImage?.opacity ?? 0.35;
+      state.refImage={img, url, opacity};
+      syncRefImageUI();
+      renderCanvas();
+    };
+    img.src=url;
+    input.value='';   // allow re-uploading the same file
+  };
+  if(clearBtn) clearBtn.onclick=()=>{
+    if(state.refImage?.url) URL.revokeObjectURL(state.refImage.url);
+    state.refImage=null;
+    syncRefImageUI(); renderCanvas();
+  };
+  if(opSlider) opSlider.oninput=(e)=>{
+    const v=clamp(+e.target.value/100, 0.05, 0.8);
+    if(state.refImage) state.refImage.opacity=v;
+    if(opVal) opVal.textContent=e.target.value+'%';
+    renderCanvas();
+  };
+})();
+
+/* ----------------------------------------------------------------------------
    bootstrap
    ------------------------------------------------------------------------- */
-function renderAll(){ renderCanvas(); renderEasing(); renderTimeline(); renderGroups(); }
+function renderAll(){ renderCanvas(); renderEasing(); renderTimeline(); renderGroups(); renderTabs(); }
 function onResize(){ fitCanvas(); renderAll(); }
 window.addEventListener('resize', onResize);
 setTool('draw');
 updateUndoButtons();
 fitCanvas();
+renderTabs();
+renderPalette();
 renderAll();
 </script>
 </body>
