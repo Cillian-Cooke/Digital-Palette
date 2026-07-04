@@ -1466,7 +1466,7 @@ function strictlyIncreasing(frames){
 }
 
 document.getElementById('exportBtn').onclick=()=>{
-  if(state.strokes.length===0){ alert('Draw a stroke first.'); return; }
+  if(state.strokes.length===0 && !state.baseRiv){ alert('Draw a stroke first.'); return; }
   const bytes = state.baseRiv
     ? exportRivCombined(state.baseRiv, state.strokes, state.transparency)
     : exportRiv(state.strokes, state.canvas.w, state.canvas.h, state.transparency);
@@ -1713,7 +1713,7 @@ function getRiveRuntime(){
 // in drawBaseRiv), so no rAF loop is needed here.
 async function startBaseRivAnim(bytes, ref){
   const rive=await getRiveRuntime();
-  if(!rive || state.baseRiv!==ref) return;
+  if(!rive || state.baseRiv!==ref) return; // aborted or runtime unavailable (file://)
   try{
     const {artW,artH}=ref;
     const offscreen=document.createElement('canvas'); offscreen.width=artW; offscreen.height=artH;
@@ -1723,16 +1723,31 @@ async function startBaseRivAnim(bytes, ref){
     let animInst=null;
     try{ const la=artboard.animationByIndex(0); animInst=new rive.LinearAnimationInstance(la,artboard); }catch(_){}
     ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard; ref._animInst=animInst;
-    renderCanvas(); // show frame 0 immediately once loaded
-  }catch(e){ console.warn('base .riv setup failed:',e); }
+  }catch(e){ console.warn('base .riv preview failed:',e); }
+  if(state.baseRiv===ref) renderCanvas(); // replace placeholder with real frame (or re-show placeholder on error)
 }
 
 // Render the base .riv at the current playhead position and composite it
-// onto the canvas. Tied to state.playhead so scrubbing and play are synced.
+// onto the canvas. Shows a labelled placeholder while the runtime is loading
+// so the user can see the file is active before the preview is ready.
 function drawBaseRiv(){
-  if(!state.baseRiv || !_riveRt) return;
-  const {_animInst,_artboard,_renderer,_offscreen,artW,artH,animDuration,opacity}=state.baseRiv;
-  if(!_artboard) return;
+  if(!state.baseRiv) return;
+  const {_animInst,_artboard,_renderer,_offscreen,artW,artH,animDuration,opacity,filename}=state.baseRiv;
+  if(!_artboard || !_riveRt){
+    // runtime not yet loaded (or unavailable on file://) — tinted overlay as placeholder
+    ctx.save();
+    ctx.globalAlpha=Math.max(opacity,0.25);
+    ctx.fillStyle='rgba(30,30,60,0.6)';
+    ctx.fillRect(0,0,state.canvas.w,state.canvas.h);
+    ctx.globalAlpha=1;
+    ctx.fillStyle='rgba(106,209,255,0.55)';
+    const fs=Math.max(8,Math.min(16,state.canvas.w/30,state.canvas.h/20));
+    ctx.font=`${fs}px monospace`; ctx.textAlign='center';
+    ctx.fillText(`base: ${filename}`,state.canvas.w/2,state.canvas.h/2);
+    if(animDuration>0) ctx.fillText(`${animDuration.toFixed(2)}s`,state.canvas.w/2,state.canvas.h/2+fs*1.5);
+    ctx.textAlign='left'; ctx.restore();
+    return;
+  }
   const t=animDuration>0?state.playhead%animDuration:0;
   if(_animInst){ _animInst.time=t; _animInst.apply(1.0); }
   _artboard.advance(0);
