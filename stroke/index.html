@@ -1125,13 +1125,13 @@ function tick(ts){
   if(!state.playing) return;
   const dt=(ts-lastTs)/1000; lastTs=ts;
   state.playhead+=dt;
-  const total=totalDuration();
-  if(state.playhead>total) state.playhead=0;     // loop
+  const total=Math.max(totalDuration(), state.baseRiv?.animDuration||0);
+  if(state.playhead>total) state.playhead=0;
   renderCanvas(); renderTimeline(); renderEasing();
   requestAnimationFrame(tick);
 }
 function play(){
-  if(state.strokes.length===0) return;
+  if(state.strokes.length===0 && !state.baseRiv) return;
   state.playing=true; state.playhead=0; lastTs=performance.now();
   document.getElementById('playBtn').textContent='❚❚ pause';
   requestAnimationFrame(tick);
