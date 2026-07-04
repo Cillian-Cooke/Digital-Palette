@@ -1709,11 +1709,35 @@ function getRiveRuntime(){
   return _riveRtP;
 }
 
-// Load Rive instances for the base .riv. Rendering is synchronous (per-frame
-// in drawBaseRiv), so no rAF loop is needed here.
+// Free-running preview loop — plays the base animation continuously so the
+// user can see it as a guide while drawing. Self-terminates when the base is
+// cleared. Pauses during stroke playback (tick() drives rendering then).
+let _previewLoopRunning=false, _previewTs=0;
+function basePreviewLoop(ts){
+  const ref=state.baseRiv;
+  if(!ref?._artboard || !_riveRt){ _previewLoopRunning=false; return; } // stop if cleared
+  if(!state.playing){
+    const dt=Math.min((ts-_previewTs)/1000,0.1);
+    _previewTs=ts;
+    const {_animInst,_artboard,_renderer,_offscreen,artW,artH}=ref;
+    if(_animInst){ _animInst.advance(dt); _animInst.apply(1.0); }
+    _artboard.advance(0);
+    _renderer.clear(); _renderer.save();
+    _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
+    _artboard.draw(_renderer); _renderer.restore();
+    const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+    renderCanvas();
+  }
+  requestAnimationFrame(basePreviewLoop);
+}
+function ensurePreviewLoop(){
+  if(!_previewLoopRunning){ _previewLoopRunning=true; _previewTs=performance.now(); requestAnimationFrame(basePreviewLoop); }
+}
+
+// Load Rive instances for the base .riv, then kick off the preview loop.
 async function startBaseRivAnim(bytes, ref){
   const rive=await getRiveRuntime();
-  if(!rive || state.baseRiv!==ref) return; // aborted or runtime unavailable (file://)
+  if(!rive || state.baseRiv!==ref) return;
   try{
     const {artW,artH}=ref;
     const offscreen=document.createElement('canvas'); offscreen.width=artW; offscreen.height=artH;
@@ -1724,17 +1748,16 @@ async function startBaseRivAnim(bytes, ref){
     try{ const la=artboard.animationByIndex(0); animInst=new rive.LinearAnimationInstance(la,artboard); }catch(_){}
     ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard; ref._animInst=animInst;
   }catch(e){ console.warn('base .riv preview failed:',e); }
-  if(state.baseRiv===ref) renderCanvas(); // replace placeholder with real frame (or re-show placeholder on error)
+  if(state.baseRiv===ref){ ensurePreviewLoop(); renderCanvas(); }
 }
 
-// Render the base .riv at the current playhead position and composite it
-// onto the canvas. Shows a labelled placeholder while the runtime is loading
-// so the user can see the file is active before the preview is ready.
+// Draw the base .riv onto the canvas. Preview loop keeps _offscreen current
+// when not playing; during playback we sync to the stroke playhead instead.
 function drawBaseRiv(){
   if(!state.baseRiv) return;
   const {_animInst,_artboard,_renderer,_offscreen,artW,artH,animDuration,opacity,filename}=state.baseRiv;
   if(!_artboard || !_riveRt){
-    // runtime not yet loaded (or unavailable on file://) — tinted overlay as placeholder
+    // runtime not yet loaded (or unavailable on file://) — tinted placeholder
     ctx.save();
     ctx.globalAlpha=Math.max(opacity,0.25);
     ctx.fillStyle='rgba(30,30,60,0.6)';
@@ -1748,13 +1771,17 @@ function drawBaseRiv(){
     ctx.textAlign='left'; ctx.restore();
     return;
   }
-  const t=animDuration>0?state.playhead%animDuration:0;
-  if(_animInst){ _animInst.time=t; _animInst.apply(1.0); }
-  _artboard.advance(0);
-  _renderer.clear(); _renderer.save();
-  _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
-  _artboard.draw(_renderer); _renderer.restore();
-  const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+  if(state.playing){
+    // sync to playhead during stroke playback so both animations stay in step
+    const t=animDuration>0?state.playhead%animDuration:0;
+    if(_animInst){ _animInst.time=t; _animInst.apply(1.0); }
+    _artboard.advance(0);
+    _renderer.clear(); _renderer.save();
+    _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
+    _artboard.draw(_renderer); _renderer.restore();
+    const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+  }
+  // blit _offscreen — kept current by preview loop (idle) or rendered above (playing)
   ctx.save(); ctx.globalAlpha=opacity;
   ctx.drawImage(_offscreen,0,0,state.canvas.w,state.canvas.h);
   ctx.restore();
