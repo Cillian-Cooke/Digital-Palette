@@ -1523,12 +1523,6 @@ function setActiveDoc(i){
   setTool(state.tool);
   updateUndoButtons();
   renderTabs();
-  // restart preview loop for the newly active tab if it has a loaded base .riv
-  if(state.baseRiv?._animInst){
-    const gen=++_baseRivGen;
-    _baseRivLastTs=performance.now();
-    requestAnimationFrame(ts=>baseRivLoop(ts,gen,state.baseRiv));
-  }
 }
 function addDoc(){ documents.push(newDoc()); setActiveDoc(documents.length-1); }
 function closeDoc(i){
@@ -1715,29 +1709,8 @@ function getRiveRuntime(){
   return _riveRtP;
 }
 
-// Live preview loop — advances the animation each rAF tick and copies the
-// offscreen canvas to ref.snapshot so drawBaseRiv() can composite it.
-// Generation counter lets tab-switches and re-uploads kill stale loops.
-let _baseRivGen=0, _baseRivLastTs=0;
-function baseRivLoop(ts, gen, ref){
-  if(gen!==_baseRivGen || state.baseRiv!==ref || !ref._animInst) return;
-  const dt=Math.min((ts-_baseRivLastTs)/1000, 0.1);
-  _baseRivLastTs=ts;
-  const {_animInst,_artboard,_renderer,_offscreen,_snap2d,artW,artH}=ref;
-  _animInst.advance(dt); _animInst.apply(1.0); _artboard.advance(0);
-  _renderer.clear(); _renderer.save();
-  _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
-  _artboard.draw(_renderer); _renderer.restore();
-  const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
-  const snap2dCtx=_snap2d.getContext('2d');
-  snap2dCtx.clearRect(0,0,artW,artH);
-  snap2dCtx.drawImage(_offscreen,0,0);
-  ref.snapshot=_snap2d;
-  renderCanvas();
-  requestAnimationFrame(ts2=>baseRivLoop(ts2,gen,ref));
-}
-
-// Set up Rive instances for a base .riv and kick off the preview loop.
+// Load Rive instances for the base .riv. Rendering is synchronous (per-frame
+// in drawBaseRiv), so no rAF loop is needed here.
 async function startBaseRivAnim(bytes, ref){
   const rive=await getRiveRuntime();
   if(!rive || state.baseRiv!==ref) return;
@@ -1749,20 +1722,26 @@ async function startBaseRivAnim(bytes, ref){
     const artboard=file.defaultArtboard();
     let animInst=null;
     try{ const la=artboard.animationByIndex(0); animInst=new rive.LinearAnimationInstance(la,artboard); }catch(_){}
-    const snap2d=document.createElement('canvas'); snap2d.width=artW; snap2d.height=artH;
-    ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard;
-    ref._animInst=animInst; ref._snap2d=snap2d; ref.snapshot=snap2d;
-    const gen=++_baseRivGen;
-    _baseRivLastTs=performance.now();
-    requestAnimationFrame(ts=>baseRivLoop(ts,gen,ref));
-  }catch(e){ console.warn('base .riv preview failed:',e); }
+    ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard; ref._animInst=animInst;
+    renderCanvas(); // show frame 0 immediately once loaded
+  }catch(e){ console.warn('base .riv setup failed:',e); }
 }
 
-// Draw the base .riv live snapshot as the bottom canvas layer.
+// Render the base .riv at the current playhead position and composite it
+// onto the canvas. Tied to state.playhead so scrubbing and play are synced.
 function drawBaseRiv(){
-  if(!state.baseRiv?.snapshot) return;
-  ctx.save(); ctx.globalAlpha=state.baseRiv.opacity;
-  ctx.drawImage(state.baseRiv.snapshot,0,0,state.canvas.w,state.canvas.h);
+  if(!state.baseRiv || !_riveRt) return;
+  const {_animInst,_artboard,_renderer,_offscreen,artW,artH,animDuration,opacity}=state.baseRiv;
+  if(!_artboard) return;
+  const t=animDuration>0?state.playhead%animDuration:0;
+  if(_animInst){ _animInst.time=t; _animInst.apply(1.0); }
+  _artboard.advance(0);
+  _renderer.clear(); _renderer.save();
+  _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
+  _artboard.draw(_renderer); _renderer.restore();
+  const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+  ctx.save(); ctx.globalAlpha=opacity;
+  ctx.drawImage(_offscreen,0,0,state.canvas.w,state.canvas.h);
   ctx.restore();
 }
 
@@ -1912,16 +1891,15 @@ function syncBaseRivUI(){
     try{ parsed=parseRivBytes(bytes); }catch(err){ alert('Not a valid .riv file: '+err.message); return; }
     const {typeMap,componentCount,artW,artH,animDuration,compObjBytes,animObjBytes}=parsed;
     if(artW>0&&artH>0) applyCanvasSize(artW,artH);
-    ++_baseRivGen; // kill any running preview loop for the old base .riv
     const prev=state.baseRiv;
     state.baseRiv={filename:file.name,typeMap,componentCount,compObjBytes,animObjBytes,animDuration,
       artW:artW||state.canvas.w, artH:artH||state.canvas.h,
-      opacity:prev?.opacity??0.5, snapshot:null,
-      _animInst:null,_artboard:null,_renderer:null,_offscreen:null,_snap2d:null};
+      opacity:prev?.opacity??0.5,
+      _animInst:null,_artboard:null,_renderer:null,_offscreen:null};
     syncBaseRivUI(); renderCanvas(); renderTimeline();
     startBaseRivAnim(bytes, state.baseRiv);
   };
-  if(clearBtn) clearBtn.onclick=()=>{ ++_baseRivGen; state.baseRiv=null; syncBaseRivUI(); renderCanvas(); renderTimeline(); };
+  if(clearBtn) clearBtn.onclick=()=>{ state.baseRiv=null; syncBaseRivUI(); renderCanvas(); renderTimeline(); };
   if(opSlider) opSlider.oninput=e=>{
     const v=clamp(+e.target.value/100,0.1,1);
     if(state.baseRiv) state.baseRiv.opacity=v;
