@@ -991,7 +991,7 @@ function fullEnd(st){ return st.holdToEnd ? animEnd() : st.timelineStart+st.time
 function totalDuration(){ return animEnd(); }
 const TL={ rowH:22, padL:8, padR:16 };
 function tlWidth(){ return tlScroll.clientWidth || 800; }
-function tlView(){ return Math.max(totalDuration()*1.08, 2); }
+function tlView(){ return Math.max(totalDuration()*1.08, state.baseRiv?.animDuration||0, 2); }
 function tlPps(){ return (tlWidth()-TL.padL-TL.padR)/tlView(); }
 function tlX(t){ return TL.padL + t*tlPps(); }
 function tlInvX(px){ return Math.max(0,(px-TL.padL)/tlPps()); }
@@ -1000,6 +1000,8 @@ function tlInvX(px){ return Math.max(0,(px-TL.padL)/tlPps()); }
 // group (collapsed → one dimmed row; expanded → header + faded member rows).
 function tlRows(){
   const rows=[];
+  if(state.baseRiv?.animDuration>0)
+    rows.push({type:'base', dur:state.baseRiv.animDuration, name:state.baseRiv.filename});
   state.strokes.forEach(st=>{ if(!st.groupId) rows.push({type:'stroke', st}); });
   state.groups.forEach(g=>{
     const members=state.strokes.filter(s=>s.groupId===g.id);
@@ -1040,6 +1042,12 @@ function renderTimeline(){
 
   rows.forEach((row,i)=>{
     const y=4+i*TL.rowH, h=TL.rowH-6;
+    if(row.type==='base'){
+      const x0=tlX(0), x1=tlX(row.dur);
+      svg+=`<rect x="${x0.toFixed(1)}" y="${y}" width="${Math.max(2,x1-x0).toFixed(1)}" height="${h}" rx="2" fill="#28283a" stroke="#3a3a5a" stroke-width="1" opacity="0.9"/>`;
+      if(x1-x0>50) svg+=`<text x="${(x0+5).toFixed(1)}" y="${y+h/2+3}" fill="#5a5a7a" font-size="9" font-family="monospace" style="pointer-events:none">base: ${row.name} · ${fmt(row.dur)}s</text>`;
+      return;
+    }
     if(row.type==='group'){
       const g=row.g;
       const s0=Math.min(...row.members.map(m=>m.timelineStart));
@@ -1512,9 +1520,15 @@ function setActiveDoc(i){
   state.drag=null; state.recording=null; state.boxSel=null; state.marquee=[];
   syncDocControls();
   fitCanvas();
-  setTool(state.tool);             // refresh tool buttons + render the scene
+  setTool(state.tool);
   updateUndoButtons();
   renderTabs();
+  // restart preview loop for the newly active tab if it has a loaded base .riv
+  if(state.baseRiv?._animInst){
+    const gen=++_baseRivGen;
+    _baseRivLastTs=performance.now();
+    requestAnimationFrame(ts=>baseRivLoop(ts,gen,state.baseRiv));
+  }
 }
 function addDoc(){ documents.push(newDoc()); setActiveDoc(documents.length-1); }
 function closeDoc(i){
@@ -1655,38 +1669,39 @@ function parseRivBytes(bytes){
   }
   if(bytes[0]!==0x52||bytes[1]!==0x49||bytes[2]!==0x56||bytes[3]!==0x45)
     throw new Error('not a .riv file');
-  pos=4; varuint(); varuint(); varuint(); // major, minor, fileId
+  pos=4; varuint(); varuint(); varuint();
   const keys=[]; for(let k=varuint();k!==0;k=varuint()) keys.push(k);
   const typeMap=new Map();
   const bitmapWords=[]; for(let i=0;i<Math.ceil(keys.length/4);i++) bitmapWords.push(u32());
   for(let i=0;i<keys.length;i++) typeMap.set(keys[i],(bitmapWords[i>>2]>>((i%4)*2))&3);
 
   const objStreamStart=pos;
-  // Only these types occupy artboard index slots (selftest.mjs §4):
-  const COMP=new Set([3,16,6,24,18,47]); // Shape, PointsPath, CubicVertex, Stroke, SolidColor, TrimPath
-  const ANIM=new Set([31,25,26,30]);      // LinearAnimation, KeyedObject, KeyedProperty, KeyFrameDouble
-  let componentCount=0, artW=0, artH=0, animSplit=-1;
+  const COMP=new Set([3,16,6,24,18,47]);
+  const ANIM=new Set([31,25,26,30]);
+  let componentCount=0, artW=0, artH=0, animSplit=-1, animFps=0, animFrames=0;
 
   while(pos<bytes.length){
     const objOffset=pos-objStreamStart;
     const typeKey=varuint();
     const isArt=(typeKey===1);
+    const isLA=(typeKey===31)&&(animFps===0); // extract fps/duration from first LinearAnimation
     let pk;
     while((pk=varuint())!==0){
       const code=typeMap.get(pk)??0;
       if(isArt && pk===7 && code===2){ artW=view.getFloat32(pos,true); pos+=4; }
       else if(isArt && pk===8 && code===2){ artH=view.getFloat32(pos,true); pos+=4; }
+      else if(isLA && pk===56){ animFps=varuint(); }    // fps (uint)
+      else if(isLA && pk===57){ animFrames=varuint(); } // duration in frames (uint)
       else skipVal(code);
     }
     if(COMP.has(typeKey)) componentCount++;
     if(ANIM.has(typeKey) && animSplit===-1) animSplit=objOffset;
   }
   const all=bytes.slice(objStreamStart);
-  return {
-    typeMap, componentCount, artW, artH,
-    compObjBytes: animSplit>=0?all.slice(0,animSplit):all,
-    animObjBytes: animSplit>=0?all.slice(animSplit):new Uint8Array(0),
-  };
+  const animDuration=animFps>0?animFrames/animFps:0;
+  return {typeMap,componentCount,artW,artH,animDuration,
+    compObjBytes:animSplit>=0?all.slice(0,animSplit):all,
+    animObjBytes:animSplit>=0?all.slice(animSplit):new Uint8Array(0)};
 }
 
 // Lazy canvas-advanced runtime (references grid/rive/ — already vendored there)
@@ -1700,30 +1715,50 @@ function getRiveRuntime(){
   return _riveRtP;
 }
 
-// Render frame 0 of a .riv into a plain 2D canvas snapshot (for background preview)
-async function snapRivFirstFrame(bytes, W, H){
-  const rive=await getRiveRuntime(); if(!rive) return null;
-  try{
-    const rivCanvas=document.createElement('canvas'); rivCanvas.width=W; rivCanvas.height=H;
-    const renderer=rive.makeRenderer(rivCanvas);
-    const file=await rive.load(new Uint8Array(bytes));
-    const artboard=file.defaultArtboard();
-    try{
-      const la=artboard.animationByIndex(0);
-      const inst=new rive.LinearAnimationInstance(la,artboard);
-      inst.time=0; inst.apply(1.0); artboard.advance(0);
-    }catch(_){ artboard.advance(0); }
-    renderer.clear(); renderer.save();
-    renderer.align(rive.Fit.contain,rive.Alignment.center,{minX:0,minY:0,maxX:W,maxY:H},artboard.bounds);
-    artboard.draw(renderer); renderer.restore();
-    const H_arr=renderer.H; for(const fn of H_arr) fn(); H_arr.length=0;
-    const snap=document.createElement('canvas'); snap.width=W; snap.height=H;
-    snap.getContext('2d').drawImage(rivCanvas,0,0);
-    return snap;
-  }catch(e){ console.warn('first-frame render failed:',e); return null; }
+// Live preview loop — advances the animation each rAF tick and copies the
+// offscreen canvas to ref.snapshot so drawBaseRiv() can composite it.
+// Generation counter lets tab-switches and re-uploads kill stale loops.
+let _baseRivGen=0, _baseRivLastTs=0;
+function baseRivLoop(ts, gen, ref){
+  if(gen!==_baseRivGen || state.baseRiv!==ref || !ref._animInst) return;
+  const dt=Math.min((ts-_baseRivLastTs)/1000, 0.1);
+  _baseRivLastTs=ts;
+  const {_animInst,_artboard,_renderer,_offscreen,_snap2d,artW,artH}=ref;
+  _animInst.advance(dt); _animInst.apply(1.0); _artboard.advance(0);
+  _renderer.clear(); _renderer.save();
+  _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
+  _artboard.draw(_renderer); _renderer.restore();
+  const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+  const snap2dCtx=_snap2d.getContext('2d');
+  snap2dCtx.clearRect(0,0,artW,artH);
+  snap2dCtx.drawImage(_offscreen,0,0);
+  ref.snapshot=_snap2d;
+  renderCanvas();
+  requestAnimationFrame(ts2=>baseRivLoop(ts2,gen,ref));
 }
 
-// Draw the base .riv first-frame snapshot as the bottom canvas layer
+// Set up Rive instances for a base .riv and kick off the preview loop.
+async function startBaseRivAnim(bytes, ref){
+  const rive=await getRiveRuntime();
+  if(!rive || state.baseRiv!==ref) return;
+  try{
+    const {artW,artH}=ref;
+    const offscreen=document.createElement('canvas'); offscreen.width=artW; offscreen.height=artH;
+    const renderer=rive.makeRenderer(offscreen);
+    const file=await rive.load(new Uint8Array(bytes));
+    const artboard=file.defaultArtboard();
+    let animInst=null;
+    try{ const la=artboard.animationByIndex(0); animInst=new rive.LinearAnimationInstance(la,artboard); }catch(_){}
+    const snap2d=document.createElement('canvas'); snap2d.width=artW; snap2d.height=artH;
+    ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard;
+    ref._animInst=animInst; ref._snap2d=snap2d; ref.snapshot=snap2d;
+    const gen=++_baseRivGen;
+    _baseRivLastTs=performance.now();
+    requestAnimationFrame(ts=>baseRivLoop(ts,gen,ref));
+  }catch(e){ console.warn('base .riv preview failed:',e); }
+}
+
+// Draw the base .riv live snapshot as the bottom canvas layer.
 function drawBaseRiv(){
   if(!state.baseRiv?.snapshot) return;
   ctx.save(); ctx.globalAlpha=state.baseRiv.opacity;
@@ -1875,17 +1910,18 @@ function syncBaseRivUI(){
     try{ bytes=new Uint8Array(await file.arrayBuffer()); }catch{ alert('Could not read file.'); return; }
     let parsed;
     try{ parsed=parseRivBytes(bytes); }catch(err){ alert('Not a valid .riv file: '+err.message); return; }
-    const {typeMap,componentCount,artW,artH,compObjBytes,animObjBytes}=parsed;
+    const {typeMap,componentCount,artW,artH,animDuration,compObjBytes,animObjBytes}=parsed;
     if(artW>0&&artH>0) applyCanvasSize(artW,artH);
+    ++_baseRivGen; // kill any running preview loop for the old base .riv
     const prev=state.baseRiv;
-    state.baseRiv={filename:file.name,typeMap,componentCount,compObjBytes,animObjBytes,
+    state.baseRiv={filename:file.name,typeMap,componentCount,compObjBytes,animObjBytes,animDuration,
       artW:artW||state.canvas.w, artH:artH||state.canvas.h,
-      opacity:prev?.opacity??0.5, snapshot:null};
-    syncBaseRivUI(); renderCanvas();
-    const ref=state.baseRiv, W=ref.artW, H=ref.artH;
-    snapRivFirstFrame(bytes,W,H).then(snap=>{ if(state.baseRiv===ref){ ref.snapshot=snap; renderCanvas(); } });
+      opacity:prev?.opacity??0.5, snapshot:null,
+      _animInst:null,_artboard:null,_renderer:null,_offscreen:null,_snap2d:null};
+    syncBaseRivUI(); renderCanvas(); renderTimeline();
+    startBaseRivAnim(bytes, state.baseRiv);
   };
-  if(clearBtn) clearBtn.onclick=()=>{ state.baseRiv=null; syncBaseRivUI(); renderCanvas(); };
+  if(clearBtn) clearBtn.onclick=()=>{ ++_baseRivGen; state.baseRiv=null; syncBaseRivUI(); renderCanvas(); renderTimeline(); };
   if(opSlider) opSlider.oninput=e=>{
     const v=clamp(+e.target.value/100,0.1,1);
     if(state.baseRiv) state.baseRiv.opacity=v;
