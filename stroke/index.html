@@ -1523,6 +1523,7 @@ function setActiveDoc(i){
   setTool(state.tool);
   updateUndoButtons();
   renderTabs();
+  if(state.baseRiv?._preview) ensurePreviewLoop();
 }
 function addDoc(){ documents.push(newDoc()); setActiveDoc(documents.length-1); }
 function closeDoc(i){
@@ -1698,34 +1699,114 @@ function parseRivBytes(bytes){
     animObjBytes:animSplit>=0?all.slice(animSplit):new Uint8Array(0)};
 }
 
-// Lazy canvas-advanced runtime (references grid/rive/ — already vendored there)
-let _riveRt=null, _riveRtP=null;
-function getRiveRuntime(){
-  if(_riveRt) return Promise.resolve(_riveRt);
-  if(_riveRtP) return _riveRtP;
-  _riveRtP=import('../grid/rive/canvas_advanced.mjs').then(mod=>mod.default({
-    locateFile: f=>new URL(f.endsWith('.wasm')?'../grid/rive/rive.wasm':'../grid/rive/'+f, location.href).href
-  })).then(rt=>{ _riveRt=rt; return rt; }).catch(e=>{ console.warn('Rive runtime unavailable:',e.message); _riveRtP=null; return null; });
-  return _riveRtP;
+// ---------------------------------------------------------------------------
+// Pure-canvas manual renderer for the base .riv preview.
+// Parses knots + keyframes directly from the binary — no Rive runtime,
+// no HTTP, no WebGL. Works on file://.
+// ---------------------------------------------------------------------------
+
+function parseRivForPreview(bytes){
+  let pos=0;
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  function varuint(){ let r=0,s=0,b; do{b=bytes[pos++];r|=(b&0x7f)<<s;s+=7;}while(b&0x80); return r>>>0; }
+  function u32(){ const v=view.getUint32(pos,true); pos+=4; return v>>>0; }
+  function f32(){ const v=view.getFloat32(pos,true); pos+=4; return v; }
+  function sstr(){ const n=varuint(); const s=new TextDecoder().decode(bytes.slice(pos,pos+n)); pos+=n; return s; }
+  if(bytes[0]!==0x52||bytes[1]!==0x49||bytes[2]!==0x56||bytes[3]!==0x45) return null;
+  pos=4; varuint(); varuint(); varuint();
+  const keys=[]; for(let k=varuint();k!==0;k=varuint()) keys.push(k);
+  const typeMap=new Map();
+  const bm=[]; for(let i=0;i<Math.ceil(keys.length/4);i++) bm.push(u32());
+  for(let i=0;i<keys.length;i++) typeMap.set(keys[i],(bm[i>>2]>>((i%4)*2))&3);
+  const COMP=new Set([3,16,6,24,18,47]);
+  let fps=60, animFrames=60, compIdx=1;
+  const shapeMap=new Map(), pathMap=new Map(), strokeMap=new Map(), trimMap=new Map();
+  const keyframes=new Map(); // compIdx → Map<propKey,[{frame,value}]>
+  let curKObj=-1, curProp=-1, curKfList=null;
+  while(pos<bytes.length){
+    const tk=varuint(); const props={};
+    let pk; while((pk=varuint())!==0){
+      const code=typeMap.get(pk)??0;
+      if(code===0) props[pk]=varuint();
+      else if(code===1) props[pk]=sstr();
+      else if(code===2) props[pk]=f32();
+      else { props[pk]=view.getUint32(pos,true)>>>0; pos+=4; }
+    }
+    if(COMP.has(tk)){
+      const mi=compIdx++; const pid=props[5]??0;
+      if(tk===3) shapeMap.set(mi,{pid});
+      else if(tk===16) pathMap.set(mi,{pid,knots:[]});
+      else if(tk===6){ const p=pathMap.get(pid); if(p) p.knots.push({vx:props[24]??0,vy:props[25]??0,inRot:props[84]??0,inDist:props[85]??0,outRot:props[86]??0,outDist:props[87]??0}); }
+      else if(tk===24) strokeMap.set(mi,{pid,thickness:props[47]??2,color:'rgba(234,234,238,1)'});
+      else if(tk===18){ const c=props[37]??0xffffffff; const r=(c>>>16)&0xff,g=(c>>>8)&0xff,b=c&0xff,a=(c>>>24)&0xff; const st=strokeMap.get(pid); if(st) st.color=`rgba(${r},${g},${b},${(a/255).toFixed(3)})`; }
+      else if(tk===47) trimMap.set(mi,{pid});
+    } else if(tk===31){ fps=props[56]||60; animFrames=props[57]||60; }
+    else if(tk===25){ curKObj=props[51]??-1; if(!keyframes.has(curKObj)) keyframes.set(curKObj,new Map()); }
+    else if(tk===26){ curProp=props[53]??-1; if(curKObj>=0){ const km=keyframes.get(curKObj); if(km){ curKfList=[]; km.set(curProp,curKfList); }}}
+    else if(tk===30){ if(curKfList) curKfList.push({frame:props[67]??0,value:props[70]??0}); }
+  }
+  // build shape → {pathIdx, strokeIdx, trimIdx} associations
+  const assoc=new Map();
+  for(const [i,p] of pathMap){ const e=assoc.get(p.pid)||{}; e.pathIdx=i; assoc.set(p.pid,e); }
+  for(const [i,s] of strokeMap){ const e=assoc.get(s.pid)||{}; e.strokeIdx=i; assoc.set(s.pid,e); }
+  for(const [i,t] of trimMap){ const s=strokeMap.get(t.pid); if(s){ const e=assoc.get(s.pid)||{}; e.trimIdx=i; assoc.set(s.pid,e); }}
+  return {fps,animDuration:fps>0?animFrames/fps:1,shapeMap,pathMap,strokeMap,assoc,keyframes};
 }
 
-// Free-running preview loop — plays the base animation continuously so the
-// user can see it as a guide while drawing. Self-terminates when the base is
-// cleared. Pauses during stroke playback (tick() drives rendering then).
+function kfInterp(kfList,frame){
+  if(!kfList||!kfList.length) return null;
+  if(frame<=kfList[0].frame) return kfList[0].value;
+  const last=kfList[kfList.length-1];
+  if(frame>=last.frame) return last.value;
+  for(let i=0;i<kfList.length-1;i++){
+    if(frame>=kfList[i].frame&&frame<kfList[i+1].frame){
+      const t=(frame-kfList[i].frame)/(kfList[i+1].frame-kfList[i].frame);
+      return kfList[i].value+(kfList[i+1].value-kfList[i].value)*t;
+    }
+  }
+  return last.value;
+}
+
+function drawBaseRivManual(preview, tSec, opacity){
+  const {fps,animDuration,shapeMap,pathMap,strokeMap,assoc,keyframes}=preview;
+  const t=animDuration>0?tSec%animDuration:0;
+  const frame=t*fps;
+  function kval(idx,prop,def){ const km=keyframes.get(idx); if(!km) return def; const v=kfInterp(km.get(prop),frame); return v===null?def:v; }
+  ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+  for(const [si] of shapeMap){
+    const a=assoc.get(si); if(!a||a.pathIdx===undefined||a.strokeIdx===undefined) continue;
+    const path=pathMap.get(a.pathIdx); if(!path||path.knots.length<2) continue;
+    const stk=strokeMap.get(a.strokeIdx); if(!stk) continue;
+    const trimEnd=a.trimIdx!==undefined?kval(a.trimIdx,115,1):1;
+    const op=kval(si,18,1);
+    if(op<0.01||trimEnd<0.001) continue;
+    const dx=kval(si,13,0), dy=kval(si,14,0);
+    const kn=path.knots;
+    const segs=[];
+    for(let i=0;i<kn.length-1;i++) segs.push({
+      p0:{x:kn[i].vx,y:kn[i].vy},
+      cp1:{x:kn[i].vx+Math.cos(kn[i].outRot)*kn[i].outDist,y:kn[i].vy+Math.sin(kn[i].outRot)*kn[i].outDist},
+      cp2:{x:kn[i+1].vx+Math.cos(kn[i+1].inRot)*kn[i+1].inDist,y:kn[i+1].vy+Math.sin(kn[i+1].inRot)*kn[i+1].inDist},
+      p1:{x:kn[i+1].vx,y:kn[i+1].vy}
+    });
+    ctx.save(); ctx.translate(dx,dy);
+    ctx.globalAlpha=op*opacity; ctx.strokeStyle=stk.color; ctx.lineWidth=stk.thickness;
+    drawTrimmed(flatten(segs,18),clamp(trimEnd,0,1));
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// rAF loop — advances _previewTime and calls renderCanvas so the animation
+// plays automatically. Works entirely in canvas (no runtime needed).
 let _previewLoopRunning=false, _previewTs=0;
 function basePreviewLoop(ts){
   const ref=state.baseRiv;
-  if(!ref?._artboard || !_riveRt){ _previewLoopRunning=false; return; } // stop if cleared
+  if(!ref?._preview){ _previewLoopRunning=false; return; }
   if(!state.playing){
     const dt=Math.min((ts-_previewTs)/1000,0.1);
     _previewTs=ts;
-    const {_animInst,_artboard,_renderer,_offscreen,artW,artH}=ref;
-    if(_animInst){ _animInst.advance(dt); _animInst.apply(1.0); }
-    _artboard.advance(0);
-    _renderer.clear(); _renderer.save();
-    _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
-    _artboard.draw(_renderer); _renderer.restore();
-    const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
+    ref._previewTime=((ref._previewTime||0)+dt)%(ref.animDuration||1);
     renderCanvas();
   }
   requestAnimationFrame(basePreviewLoop);
@@ -1734,57 +1815,16 @@ function ensurePreviewLoop(){
   if(!_previewLoopRunning){ _previewLoopRunning=true; _previewTs=performance.now(); requestAnimationFrame(basePreviewLoop); }
 }
 
-// Load Rive instances for the base .riv, then kick off the preview loop.
-async function startBaseRivAnim(bytes, ref){
-  const rive=await getRiveRuntime();
-  if(!rive || state.baseRiv!==ref) return;
-  try{
-    const {artW,artH}=ref;
-    const offscreen=document.createElement('canvas'); offscreen.width=artW; offscreen.height=artH;
-    const renderer=rive.makeRenderer(offscreen);
-    const file=await rive.load(new Uint8Array(bytes));
-    const artboard=file.defaultArtboard();
-    let animInst=null;
-    try{ const la=artboard.animationByIndex(0); animInst=new rive.LinearAnimationInstance(la,artboard); }catch(_){}
-    ref._offscreen=offscreen; ref._renderer=renderer; ref._artboard=artboard; ref._animInst=animInst;
-  }catch(e){ console.warn('base .riv preview failed:',e); }
-  if(state.baseRiv===ref){ ensurePreviewLoop(); renderCanvas(); }
-}
-
-// Draw the base .riv onto the canvas. Preview loop keeps _offscreen current
-// when not playing; during playback we sync to the stroke playhead instead.
+// Draw the base .riv layer: manual canvas renderer when idle (free-running),
+// synced to state.playhead during stroke playback.
 function drawBaseRiv(){
   if(!state.baseRiv) return;
-  const {_animInst,_artboard,_renderer,_offscreen,artW,artH,animDuration,opacity,filename}=state.baseRiv;
-  if(!_artboard || !_riveRt){
-    // runtime not yet loaded (or unavailable on file://) — tinted placeholder
-    ctx.save();
-    ctx.globalAlpha=Math.max(opacity,0.25);
-    ctx.fillStyle='rgba(30,30,60,0.6)';
-    ctx.fillRect(0,0,state.canvas.w,state.canvas.h);
-    ctx.globalAlpha=1;
-    ctx.fillStyle='rgba(106,209,255,0.55)';
-    const fs=Math.max(8,Math.min(16,state.canvas.w/30,state.canvas.h/20));
-    ctx.font=`${fs}px monospace`; ctx.textAlign='center';
-    ctx.fillText(`base: ${filename}`,state.canvas.w/2,state.canvas.h/2);
-    if(animDuration>0) ctx.fillText(`${animDuration.toFixed(2)}s`,state.canvas.w/2,state.canvas.h/2+fs*1.5);
-    ctx.textAlign='left'; ctx.restore();
-    return;
-  }
-  if(state.playing){
-    // sync to playhead during stroke playback so both animations stay in step
-    const t=animDuration>0?state.playhead%animDuration:0;
-    if(_animInst){ _animInst.time=t; _animInst.apply(1.0); }
-    _artboard.advance(0);
-    _renderer.clear(); _renderer.save();
-    _renderer.align(_riveRt.Fit.contain,_riveRt.Alignment.center,{minX:0,minY:0,maxX:artW,maxY:artH},_artboard.bounds);
-    _artboard.draw(_renderer); _renderer.restore();
-    const Harr=_renderer.H; for(const fn of Harr) fn(); Harr.length=0;
-  }
-  // blit _offscreen — kept current by preview loop (idle) or rendered above (playing)
-  ctx.save(); ctx.globalAlpha=opacity;
-  ctx.drawImage(_offscreen,0,0,state.canvas.w,state.canvas.h);
-  ctx.restore();
+  const {_preview,animDuration,opacity}=state.baseRiv;
+  if(!_preview) return;
+  const t=state.playing
+    ?(animDuration>0?state.playhead%animDuration:0)
+    :(state.baseRiv._previewTime||0);
+  drawBaseRivManual(_preview,t,opacity);
 }
 
 // Build raw bytes for stroke objects + their animation only (no Backboard/Artboard),
@@ -1937,9 +1977,9 @@ function syncBaseRivUI(){
     state.baseRiv={filename:file.name,typeMap,componentCount,compObjBytes,animObjBytes,animDuration,
       artW:artW||state.canvas.w, artH:artH||state.canvas.h,
       opacity:prev?.opacity??0.5,
-      _animInst:null,_artboard:null,_renderer:null,_offscreen:null};
-    syncBaseRivUI(); renderCanvas(); renderTimeline();
-    startBaseRivAnim(bytes, state.baseRiv);
+      _preview:parseRivForPreview(bytes), _previewTime:0};
+    syncBaseRivUI(); renderTimeline();
+    ensurePreviewLoop();
   };
   if(clearBtn) clearBtn.onclick=()=>{ state.baseRiv=null; syncBaseRivUI(); renderCanvas(); renderTimeline(); };
   if(opSlider) opSlider.oninput=e=>{
