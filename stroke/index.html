@@ -183,6 +183,13 @@
           <input id="refOpacity" type="range" min="5" max="80" step="5" value="35">
           <span id="refOpacityVal" class="label">35%</span>
           <button id="refImageClear" style="padding:2px 6px;line-height:1" title="remove reference image">✕</button></span>
+        <span class="sep"></span>
+        <input type="file" id="baseRivInput" accept=".riv" style="display:none">
+        <button id="baseRivBtn" title="upload a .riv file — your strokes will be merged into it on export">⊞ base .riv</button>
+        <span class="ctl" id="baseRivCtl" style="display:none"><span id="baseRivName" class="label" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block"></span>
+          <input id="baseRivOpacity" type="range" min="10" max="100" step="5" value="50">
+          <span id="baseRivOpacityVal" class="label">50%</span>
+          <button id="baseRivClear" style="padding:2px 6px;line-height:1" title="remove base .riv">✕</button></span>
       </div>
       <div id="groupsPanel">
         <div class="ghead"><span>groups</span><span id="groupCount" class="gmeta"></span></div>
@@ -226,6 +233,7 @@ function newDoc(name){
     canvas: { w: 1280, h: 720 },   // artboard / drawing size in px (the chosen canvas dimensions)
     transparency: 1,      // global opacity applied across the whole animation (0..1)
     refImage: null,       // {img, url, opacity} — drawing guide only, never exported
+    baseRiv: null,        // {filename, typeMap, componentCount, compObjBytes, animObjBytes, artW, artH, opacity, snapshot}
     // smoothing 0..1: how much shaky input is streamlined before curve-fitting
     brush: { thickness: 4, colour: '#ffffff', easing: [0,0,1,1], smoothing: 0.5 },  // defaults for the next stroke
     tool: 'draw',         // 'draw' | 'select' | 'box'
@@ -844,6 +852,7 @@ function drawRefImage(){
 function renderCanvas(){
   ctx.clearRect(0,0,state.canvas.w,state.canvas.h);
   ctx.lineCap='round'; ctx.lineJoin='round';
+  drawBaseRiv();
   drawRefImage();
   if(state.playing){ renderPlayback(); renderOverlay(); renderStats(); return; }
 
@@ -1450,7 +1459,9 @@ function strictlyIncreasing(frames){
 
 document.getElementById('exportBtn').onclick=()=>{
   if(state.strokes.length===0){ alert('Draw a stroke first.'); return; }
-  const bytes=exportRiv(state.strokes, state.canvas.w, state.canvas.h, state.transparency);
+  const bytes = state.baseRiv
+    ? exportRivCombined(state.baseRiv, state.strokes, state.transparency)
+    : exportRiv(state.strokes, state.canvas.w, state.canvas.h, state.transparency);
   const blob=new Blob([bytes],{type:'application/octet-stream'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url;
@@ -1489,6 +1500,7 @@ function syncDocControls(){
   if(pb) pb.textContent = state.playing ? '❚❚ pause' : '▶ play';
   syncBrushControls();             // thickness / colour / smooth / easing + palette highlight
   syncRefImageUI();
+  syncBaseRivUI();
 }
 
 function setActiveDoc(i){
@@ -1616,6 +1628,267 @@ function syncRefImageUI(){
   if(opSlider) opSlider.oninput=(e)=>{
     const v=clamp(+e.target.value/100, 0.05, 0.8);
     if(state.refImage) state.refImage.opacity=v;
+    if(opVal) opVal.textContent=e.target.value+'%';
+    renderCanvas();
+  };
+})();
+
+/* ----------------------------------------------------------------------------
+   11) BASE .RIV — upload an existing animation; drawn strokes are merged into
+       it on export. Its first frame is shown as a background drawing guide.
+   ------------------------------------------------------------------------- */
+
+// Parse a .riv binary: extract ToC, count component-indexed objects (those that
+// occupy artboard index slots), extract artboard dimensions, and split the
+// object-stream bytes into the component section (before any animation object)
+// and the animation section (from the first LinearAnimation onwards).
+// This split lets us insert our new stroke objects in the right place.
+function parseRivBytes(bytes){
+  let pos=0;
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  function varuint(){ let r=0,s=0,b; do{b=bytes[pos++]; r|=(b&0x7f)<<s; s+=7;}while(b&0x80); return r>>>0; }
+  function u32(){ const v=view.getUint32(pos,true); pos+=4; return v>>>0; }
+  function skipVal(code){
+    if(code===0) varuint();
+    else if(code===1){ const n=varuint(); pos+=n; }
+    else pos+=4;
+  }
+  if(bytes[0]!==0x52||bytes[1]!==0x49||bytes[2]!==0x56||bytes[3]!==0x45)
+    throw new Error('not a .riv file');
+  pos=4; varuint(); varuint(); varuint(); // major, minor, fileId
+  const keys=[]; for(let k=varuint();k!==0;k=varuint()) keys.push(k);
+  const typeMap=new Map();
+  const bitmapWords=[]; for(let i=0;i<Math.ceil(keys.length/4);i++) bitmapWords.push(u32());
+  for(let i=0;i<keys.length;i++) typeMap.set(keys[i],(bitmapWords[i>>2]>>((i%4)*2))&3);
+
+  const objStreamStart=pos;
+  // Only these types occupy artboard index slots (selftest.mjs §4):
+  const COMP=new Set([3,16,6,24,18,47]); // Shape, PointsPath, CubicVertex, Stroke, SolidColor, TrimPath
+  const ANIM=new Set([31,25,26,30]);      // LinearAnimation, KeyedObject, KeyedProperty, KeyFrameDouble
+  let componentCount=0, artW=0, artH=0, animSplit=-1;
+
+  while(pos<bytes.length){
+    const objOffset=pos-objStreamStart;
+    const typeKey=varuint();
+    const isArt=(typeKey===1);
+    let pk;
+    while((pk=varuint())!==0){
+      const code=typeMap.get(pk)??0;
+      if(isArt && pk===7 && code===2){ artW=view.getFloat32(pos,true); pos+=4; }
+      else if(isArt && pk===8 && code===2){ artH=view.getFloat32(pos,true); pos+=4; }
+      else skipVal(code);
+    }
+    if(COMP.has(typeKey)) componentCount++;
+    if(ANIM.has(typeKey) && animSplit===-1) animSplit=objOffset;
+  }
+  const all=bytes.slice(objStreamStart);
+  return {
+    typeMap, componentCount, artW, artH,
+    compObjBytes: animSplit>=0?all.slice(0,animSplit):all,
+    animObjBytes: animSplit>=0?all.slice(animSplit):new Uint8Array(0),
+  };
+}
+
+// Lazy canvas-advanced runtime (references grid/rive/ — already vendored there)
+let _riveRt=null, _riveRtP=null;
+function getRiveRuntime(){
+  if(_riveRt) return Promise.resolve(_riveRt);
+  if(_riveRtP) return _riveRtP;
+  _riveRtP=import('../grid/rive/canvas_advanced.mjs').then(mod=>mod.default({
+    locateFile: f=>new URL(f.endsWith('.wasm')?'../grid/rive/rive.wasm':'../grid/rive/'+f, location.href).href
+  })).then(rt=>{ _riveRt=rt; return rt; }).catch(e=>{ console.warn('Rive runtime unavailable:',e.message); _riveRtP=null; return null; });
+  return _riveRtP;
+}
+
+// Render frame 0 of a .riv into a plain 2D canvas snapshot (for background preview)
+async function snapRivFirstFrame(bytes, W, H){
+  const rive=await getRiveRuntime(); if(!rive) return null;
+  try{
+    const rivCanvas=document.createElement('canvas'); rivCanvas.width=W; rivCanvas.height=H;
+    const renderer=rive.makeRenderer(rivCanvas);
+    const file=await rive.load(new Uint8Array(bytes));
+    const artboard=file.defaultArtboard();
+    try{
+      const la=artboard.animationByIndex(0);
+      const inst=new rive.LinearAnimationInstance(la,artboard);
+      inst.time=0; inst.apply(1.0); artboard.advance(0);
+    }catch(_){ artboard.advance(0); }
+    renderer.clear(); renderer.save();
+    renderer.align(rive.Fit.contain,rive.Alignment.center,{minX:0,minY:0,maxX:W,maxY:H},artboard.bounds);
+    artboard.draw(renderer); renderer.restore();
+    const H_arr=renderer.H; for(const fn of H_arr) fn(); H_arr.length=0;
+    const snap=document.createElement('canvas'); snap.width=W; snap.height=H;
+    snap.getContext('2d').drawImage(rivCanvas,0,0);
+    return snap;
+  }catch(e){ console.warn('first-frame render failed:',e); return null; }
+}
+
+// Draw the base .riv first-frame snapshot as the bottom canvas layer
+function drawBaseRiv(){
+  if(!state.baseRiv?.snapshot) return;
+  ctx.save(); ctx.globalAlpha=state.baseRiv.opacity;
+  ctx.drawImage(state.baseRiv.snapshot,0,0,state.canvas.w,state.canvas.h);
+  ctx.restore();
+}
+
+// Build raw bytes for stroke objects + their animation only (no Backboard/Artboard),
+// with object indices starting at indexOffset so they don't collide with the base file.
+function buildStrokeBody(strokes, indexOffset, transparency){
+  const tr=clamp(transparency,0,1);
+  const body=[], toc=new Map(), enc=new TextEncoder();
+  const varuint=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; body.push(b); }while(n); };
+  const u32le=n=>{ n=n>>>0; body.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  const f32=v=>{ const a=new Uint8Array(4); new DataView(a.buffer).setFloat32(0,v,true); body.push(a[0],a[1],a[2],a[3]); };
+  const str=s=>{ const b=enc.encode(s); varuint(b.length); for(const c of b) body.push(c); };
+  const obj=typeKey=>varuint(typeKey);
+  const end=()=>varuint(0);
+  const pUint=(k,v)=>{ toc.set(k,C.uint); varuint(k); varuint(v); };
+  const pStr =(k,v)=>{ toc.set(k,C.str);  varuint(k); str(v); };
+  const pDbl =(k,v)=>{ toc.set(k,C.dbl);  varuint(k); f32(v); };
+  const pColor=(k,v)=>{ toc.set(k,C.color); varuint(k); u32le(v); };
+
+  let aEnd=0.1;
+  for(const s of strokes){
+    aEnd=Math.max(aEnd, s.timelineStart+s.timelineDuration);
+    if(!s.holdToEnd) aEnd=Math.max(aEnd, s.timelineStart+s.timelineDuration+(s.holdDuration||0));
+  }
+  const sEnd=s=>s.holdToEnd?aEnd:s.timelineStart+s.timelineDuration+(s.holdDuration||0);
+  const durFrames=Math.max(1,Math.ceil(aEnd*FPS));
+  const meta=[];
+  let next=indexOffset;
+
+  strokes.map((st,si)=>({st,si})).reverse().forEach(({st,si})=>{
+    const c=centroid(st);
+    const SHAPE=next++;
+    obj(T.Shape); pStr(P.name,`Stroke_${si+1}`); pUint(P.parentId,0); pDbl(P.opacity,1); end();
+    const PATH=next++;
+    obj(T.PointsPath); pUint(P.parentId,SHAPE); end();
+    const knots=knotsFromSegments(st.segments);
+    let bx0=Infinity,by0=Infinity,bx1=-Infinity,by1=-Infinity;
+    for(const k of knots){ bx0=Math.min(bx0,k.p.x); by0=Math.min(by0,k.p.y); bx1=Math.max(bx1,k.p.x); by1=Math.max(by1,k.p.y); }
+    const nudgeW=(bx1-bx0)<0.1, nudgeH=(by1-by0)<0.1;
+    knots.forEach((k,ki)=>{
+      next++;
+      const last=ki===knots.length-1;
+      obj(T.CubicVertex);
+        pUint(P.parentId,PATH);
+        pDbl(P.vx,k.p.x+(last&&nudgeW?0.12:0)); pDbl(P.vy,k.p.y+(last&&nudgeH?0.12:0));
+        pDbl(P.inRot,k.inRot); pDbl(P.inDist,k.inDist);
+        pDbl(P.outRot,k.outRot); pDbl(P.outDist,k.outDist);
+      end();
+    });
+    const STROKE=next++;
+    obj(T.Stroke); pUint(P.parentId,SHAPE); pDbl(P.thickness,st.thickness??4); pUint(P.cap,1); pUint(P.join,1); end();
+    next++;
+    obj(T.SolidColor); pUint(P.parentId,STROKE); pColor(P.color,hexToRiveColor(st.colour)); end();
+    const TRIM=next++;
+    obj(T.TrimPath); pUint(P.parentId,STROKE); pDbl(P.trimStart,0); pDbl(P.trimEnd,0); pDbl(P.trimOffset,0); pUint(P.trimMode,1); end();
+    meta.push({st,c,SHAPE,TRIM});
+  });
+
+  obj(T.LinearAnimation);
+    pStr(P.animName,'Strokes'); pUint(P.fps,FPS); pUint(P.duration,durFrames); pUint(P.loop,1);
+  end();
+
+  const kf=(frame,val)=>{ obj(T.KeyFrameDouble); pUint(P.frame,frame); pUint(P.interp,1); pDbl(P.value,val); end(); };
+  const keyedProp=(propKey,frames)=>{ obj(T.KeyedProperty); pUint(P.propertyKey,propKey); end(); strictlyIncreasing(frames).forEach(([f,v])=>kf(f,v)); };
+
+  meta.forEach(m=>{
+    const st=m.st;
+    const fStart=Math.round(st.timelineStart*FPS);
+    const fDraw =Math.round((st.timelineStart+st.timelineDuration)*FPS);
+    const fEnd  =Math.round(sEnd(st)*FPS);
+    obj(T.KeyedObject); pUint(P.objectId,m.TRIM); end();
+      const ease=st.easing||[0,0,1,1], trimK=[];
+      const STEPS=easeEq(ease,[0,0,1,1])?1:14;
+      for(let i=0;i<=STEPS;i++) trimK.push([Math.round(lerp(fStart,Math.max(fDraw,fStart+1),i/STEPS)),easeY(ease,i/STEPS)]);
+      keyedProp(P.trimEnd,trimK);
+    obj(T.KeyedObject); pUint(P.objectId,m.SHAPE); end();
+      const opK=[[fStart,tr],[fEnd,tr]];
+      if(fEnd<durFrames) opK.push([fEnd+1,0]);
+      keyedProp(P.opacity,opK);
+      const drift=Math.abs(st.offsetStart.x-st.offsetEnd.x)>0.01||Math.abs(st.offsetStart.y-st.offsetEnd.y)>0.01;
+      if(drift){
+        keyedProp(P.x,[[fStart,st.offsetStart.x-m.c.x],[Math.max(fEnd,fStart+1),st.offsetEnd.x-m.c.x]]);
+        keyedProp(P.y,[[fStart,st.offsetStart.y-m.c.y],[Math.max(fEnd,fStart+1),st.offsetEnd.y-m.c.y]]);
+      }
+  });
+  return {body,toc};
+}
+
+// Write a combined .riv: base file's component objects, then our new stroke objects,
+// then base file's animation objects, then our new animation — all under one merged ToC.
+// The base artboard (index 0) becomes the shared artboard; our shapes parent to it.
+function exportRivCombined(base, strokes, transparency){
+  const {typeMap:baseToc, componentCount, compObjBytes, animObjBytes}=base;
+  const {body, toc:newToc}=buildStrokeBody(strokes, componentCount+1, transparency);
+  const merged=new Map(baseToc);
+  for(const [k,v] of newToc) merged.set(k,v);
+  const head=[];
+  const hVar=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; head.push(b); }while(n); };
+  const hU32=n=>{ n=n>>>0; head.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  head.push(0x52,0x49,0x56,0x45); hVar(7); hVar(0); hVar(RIVE_FILE_ID);
+  const keys=[...merged.keys()].sort((a,b)=>a-b);
+  for(const k of keys) hVar(k);
+  hVar(0);
+  let word=0;
+  for(let i=0;i<keys.length;i++){
+    word|=(merged.get(keys[i])&3)<<((i%4)*2);
+    if(i%4===3){ hU32(word); word=0; }
+  }
+  if(keys.length%4!==0) hU32(word);
+  const bodyArr=new Uint8Array(body);
+  const out=new Uint8Array(head.length+compObjBytes.length+bodyArr.length+animObjBytes.length);
+  let off=0;
+  out.set(new Uint8Array(head),off); off+=head.length;
+  out.set(compObjBytes,off);         off+=compObjBytes.length;
+  out.set(bodyArr,off);              off+=bodyArr.length;
+  out.set(animObjBytes,off);
+  return out;
+}
+
+function syncBaseRivUI(){
+  const has=!!state.baseRiv;
+  const btn=document.getElementById('baseRivBtn'), ctl=document.getElementById('baseRivCtl');
+  if(btn) btn.style.display=has?'none':'';
+  if(ctl) ctl.style.display=has?'':'none';
+  if(has){
+    const nm=document.getElementById('baseRivName'); if(nm) nm.textContent=state.baseRiv.filename;
+    const pct=Math.round(state.baseRiv.opacity*100);
+    const ro=document.getElementById('baseRivOpacity'), rv=document.getElementById('baseRivOpacityVal');
+    if(ro) ro.value=pct; if(rv) rv.textContent=pct+'%';
+  }
+}
+
+(function wireBaseRiv(){
+  const input=document.getElementById('baseRivInput');
+  const btn=document.getElementById('baseRivBtn');
+  const clearBtn=document.getElementById('baseRivClear');
+  const opSlider=document.getElementById('baseRivOpacity');
+  const opVal=document.getElementById('baseRivOpacityVal');
+  if(!input||!btn) return;
+  btn.onclick=()=>input.click();
+  input.onchange=async e=>{
+    const file=e.target.files[0]; if(!file) return;
+    input.value='';
+    let bytes;
+    try{ bytes=new Uint8Array(await file.arrayBuffer()); }catch{ alert('Could not read file.'); return; }
+    let parsed;
+    try{ parsed=parseRivBytes(bytes); }catch(err){ alert('Not a valid .riv file: '+err.message); return; }
+    const {typeMap,componentCount,artW,artH,compObjBytes,animObjBytes}=parsed;
+    if(artW>0&&artH>0) applyCanvasSize(artW,artH);
+    const prev=state.baseRiv;
+    state.baseRiv={filename:file.name,typeMap,componentCount,compObjBytes,animObjBytes,
+      artW:artW||state.canvas.w, artH:artH||state.canvas.h,
+      opacity:prev?.opacity??0.5, snapshot:null};
+    syncBaseRivUI(); renderCanvas();
+    const ref=state.baseRiv, W=ref.artW, H=ref.artH;
+    snapRivFirstFrame(bytes,W,H).then(snap=>{ if(state.baseRiv===ref){ ref.snapshot=snap; renderCanvas(); } });
+  };
+  if(clearBtn) clearBtn.onclick=()=>{ state.baseRiv=null; syncBaseRivUI(); renderCanvas(); };
+  if(opSlider) opSlider.oninput=e=>{
+    const v=clamp(+e.target.value/100,0.1,1);
+    if(state.baseRiv) state.baseRiv.opacity=v;
     if(opVal) opVal.textContent=e.target.value+'%';
     renderCanvas();
   };
