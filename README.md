@@ -10,6 +10,7 @@ each colour dab links to a project.
 |--------|---------|--------------|
 | 🔵 cyan | **[stroke/](stroke/)** | Draw mouse strokes (with live paint preview, line smoothing, and a pickable canvas size) and export them as real Rive (`.riv`) animations, with an animation-speed (easing) editor, global transparency, timeline, groups, and undo. |
 | 🟠 amber | **[grid/](grid/)** | A field of grass, trees, rocks + water Rive animations scattered into natural clumps (forests, rocky patches, ponds) that you grow by moving the cursor. Live controls for per-type density, grid size, tile scale, reach, and speeds, plus regenerate. |
+| 🟢 green | **[lockup/](lockup/)** | Shape-layer logo lockups — parametric padlock template (fills + strokes), timeline / easing / presets (fade · assemble · pop · draw), export clean `.riv` files. |
 | ⚪ | *more drying…* | empty wells on the palette are reserved for future tools. |
 
 ## Running

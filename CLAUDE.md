@@ -13,10 +13,14 @@ the root `index.html`.
   scattered into natural clumps (per-type value-noise) that you grow with the
   cursor: tiles near the pointer play their grow-in forward (latched) and stay.
   Live per-type density controls + regenerate.
+- **lockup/** — shape-layer logo lockups (parametric padlock: shackle · body ·
+  eyes · mouth). Fill-capable `.riv` writer (closed paths), timeline, easing,
+  presets (fade / assemble / pop / draw). For clean brand lockups — not freehand.
 
 `**/test.riv` is gitignored (it's a generated fixture). Run the stroke checks:
 `node stroke/selftest.mjs` (structural) and `node stroke/gen.mjs` (writes
-`test.riv`). The whole site assumes it's served over http (see Rive note below).
+`test.riv`). Lockup: `node lockup/selftest.mjs` / `node lockup/gen.mjs`. The
+whole site assumes it's served over http (see Rive note below).
 
 ---
 
@@ -25,17 +29,20 @@ the root `index.html`.
 There are two distinct Rive concerns here: **writing** `.riv` files (stroke), and
 **playing** them at runtime (grid). They share nothing in code.
 
-## 1. Writing `.riv` from scratch (stroke/index.html §8)
+## 1. Writing `.riv` from scratch (stroke/index.html §8 · lockup/index.html)
 
 - The exporter hand-writes the binary: `RIVE` magic, varuint header (major **7**,
   minor 0, fileId), a property **ToC** (sorted keys + a 2-bits-per-key backing-type
   bitmap), then the object stream. Verified against `@rive-app/canvas` 2.21.6.
-- Core/property/type keys live in the `T` / `P` / `C` tables in §8. Gotchas baked
+- Core/property/type keys live in the `T` / `P` / `C` tables. Gotchas baked
   into the code (keep them): emit shapes in **reverse** array order (importer
   paints earlier-declared drawables on top); nudge a knot sub-pixel on
   axis-aligned paths (zero-area bbox gets dropped by trim/stroke tessellation);
   `KeyFrameDouble` interp is **linear only**, so curves (easing) must be **sampled
   into multiple keyframes**; frames must be **strictly increasing** per property.
+- **Fills (lockup):** Fill type key **20**, `fillRule` **40**, PointsPath
+  `isClosed` **32** (bool — ToC code 0 like uint, but wire encoding is 1 byte;
+  selftest must decode bool keys by property id). Stroke remains type **24**.
 - `selftest.mjs` parses the output back with the real header/ToC/object scan; it
   evals the page's `<script>` with a stubbed DOM. If you change the script's
   bootstrap or element refs, keep the stub working (guard DOM access, e.g.

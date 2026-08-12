@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lockup</title>
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#0e0e10; --line:#1d1d21; --line2:#2a2a30;
+    --ink:#d9d9dd; --muted:#6e6e76; --dim:#46464d;
+    --accent:#8ee06a; --accent2:#ffb454;
+    --mono:"SFMono-Regular",ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--mono);font-size:12px;-webkit-font-smoothing:antialiased;overflow:hidden}
+  button{font-family:var(--mono);font-size:11px;color:var(--ink);background:#15151a;
+    border:1px solid var(--line2);border-radius:4px;padding:5px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:#fff}
+  button:active{transform:translateY(1px)}
+  button.active,button.on{border-color:var(--accent);color:#fff;background:#1a2618}
+  .label{color:var(--muted);text-transform:lowercase;letter-spacing:.04em}
+  a.home{color:var(--muted);text-decoration:none;border-bottom:1px solid #26262c}
+  a.home:hover{color:var(--accent)}
+
+  #app{display:grid;grid-template-rows:34px 1fr 168px;height:100vh;width:100vw}
+  #top{display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
+  #tabbar{display:flex;align-items:center;gap:12px;padding:0 12px;background:#0c0c0e;
+    border-bottom:1px solid var(--line)}
+  #tabbar .title{color:#fff;font-weight:600;letter-spacing:.04em}
+  #tabbar .sub{color:var(--dim)}
+
+  #canvasPanel{position:relative;border-right:1px solid var(--line);overflow:hidden;background:#070708;
+    display:flex;align-items:center;justify-content:center}
+  #canvasStage{position:relative;background:#fff;
+    box-shadow:0 0 0 1px var(--line2), 0 18px 50px rgba(0,0,0,.55)}
+  #canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #stats{position:absolute;bottom:8px;left:10px;color:var(--dim);z-index:5;pointer-events:none}
+  #canvasHint{position:absolute;top:10px;left:12px;color:var(--dim);z-index:5;pointer-events:none}
+
+  #rightRail{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
+  #graphPanel{flex:0 0 auto;border-bottom:1px solid var(--line);
+    display:flex;flex-direction:column;gap:8px;padding:8px 10px}
+  #graphPanel .tag{color:var(--muted);letter-spacing:.04em}
+  #easeCurve{width:100%;height:72px;background:#0b0b0d;border:1px solid var(--line);border-radius:5px;display:block}
+  #easePresets{display:flex;flex-wrap:wrap;gap:5px}
+  #easePresets button{padding:4px 8px}
+  #easeIO{display:flex;gap:6px;align-items:center}
+  #easeIO input{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:11px;color:var(--ink);
+    background:#15151a;border:1px solid var(--line2);border-radius:4px;padding:5px 8px}
+  #easeIO input:focus{outline:none;border-color:var(--accent)}
+  #easeHint{color:var(--dim);line-height:1.45}
+
+  #toolbar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+    padding:8px;border-bottom:1px solid var(--line);background:#0c0c0e}
+  #toolbar .ctl{display:flex;gap:5px;align-items:center;padding:0 6px;border:1px solid var(--line2);
+    border-radius:4px;height:26px;background:#15151a}
+  #toolbar input[type=range]{width:72px;accent-color:var(--accent);cursor:ew-resize}
+  #toolbar input[type=color]{width:22px;height:18px;padding:0;border:1px solid var(--line2);
+    border-radius:3px;background:transparent;cursor:pointer}
+  #toolbar input[type=number]{width:48px;font-family:var(--mono);font-size:11px;color:var(--ink);
+    background:#0c0c0e;border:1px solid var(--line2);border-radius:3px;padding:2px 4px}
+  #toolbar .sep{flex-basis:100%;height:0}
+  #presets{display:flex;flex-wrap:wrap;gap:5px;width:100%}
+
+  #layersPanel{flex:1 1 0;min-height:0;overflow-y:auto;padding:6px 8px}
+  #layersPanel .ghead{display:flex;align-items:center;justify-content:space-between;
+    color:var(--muted);margin:0 0 6px;letter-spacing:.04em}
+  .lrow{display:flex;align-items:center;gap:6px;padding:5px 6px;border:1px solid var(--line);
+    border-radius:5px;margin-bottom:5px;background:#101013;cursor:pointer}
+  .lrow.sel{border-color:var(--accent);background:#142016}
+  .lrow .swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto;border:1px solid #0003}
+  .lrow .lname{flex:1 1 auto;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .lmeta{color:var(--dim);font-size:10px}
+  .lrow .lbtn{font-size:11px;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid var(--line2);
+    background:#15151a;color:var(--muted);cursor:pointer}
+  .lrow .lbtn:hover{border-color:var(--accent);color:#fff}
+  .lrow .lbtn.on{color:var(--accent)}
+
+  #timeline{position:relative;border-top:1px solid var(--line);background:var(--panel);overflow:hidden}
+  #tlRuler{position:absolute;top:0;left:0;right:0;height:18px;z-index:2;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  #tlScroll{position:absolute;top:18px;left:0;right:0;bottom:0;overflow-y:auto;overflow-x:hidden}
+  #timelineSvg{display:block;width:100%}
+  #timeline .tag{position:absolute;top:2px;right:10px;color:var(--dim);z-index:3;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tabbar">
+    <a class="home" href="../index.html">← palette</a>
+    <span class="title">Lockup</span>
+    <span class="sub">shape layers → clean .riv</span>
+  </div>
+  <div id="top">
+    <div id="canvasPanel">
+      <div id="canvasStage">
+        <canvas id="canvas"></canvas>
+      </div>
+      <div id="canvasHint">padlock lockup · pick a layer · set timing · export</div>
+      <div id="stats"></div>
+    </div>
+    <div id="rightRail">
+      <div id="graphPanel">
+        <div class="tag">animation speed · curvature</div>
+        <svg id="easeCurve" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+        <div id="easePresets"></div>
+        <div id="easeIO">
+          <input id="easeText" type="text" spellcheck="false" autocomplete="off" title="paste a cubic-bezier(...) here">
+          <button id="easeCopy" title="copy easing">⧉ copy</button>
+        </div>
+        <div id="easeHint">shapes how each layer appears (fade / assemble / draw-on).</div>
+      </div>
+      <div id="toolbar">
+        <button id="playBtn">▶ play</button>
+        <button id="exportBtn">⤓ export</button>
+        <button id="resetBtn" title="reset to the padlock template">↺ reset</button>
+        <span class="ctl" title="global opacity"><span class="label">opacity</span>
+          <input id="globalOpacity" type="range" min="0" max="100" step="1" value="100">
+          <span id="opacityVal" class="label">100</span></span>
+        <span class="sep"></span>
+        <span class="label" style="width:100%;padding:2px 2px 0">presets</span>
+        <div id="presets">
+          <button data-preset="fade" title="opacity fade-in">fade</button>
+          <button data-preset="assemble" title="slide in from offsets">assemble</button>
+          <button data-preset="pop" title="fade + slight settle">pop</button>
+          <button data-preset="draw" title="trim draw-on for strokes, fade for fills">draw</button>
+        </div>
+        <span class="sep"></span>
+        <span class="ctl"><span class="label">colour</span>
+          <input id="colour" type="color" value="#F5F0E6"></span>
+        <span class="ctl" id="thickCtl"><span class="label">width</span>
+          <input id="thickness" type="range" min="1" max="80" step="0.5" value="28">
+          <span id="thickVal" class="label">28</span></span>
+        <span class="sep"></span>
+        <span class="ctl" title="artboard size"><span class="label">canvas</span>
+          <input id="canvasW" type="number" min="64" max="4096" step="1" value="512">
+          <span class="label">×</span>
+          <input id="canvasH" type="number" min="64" max="4096" step="1" value="512">
+          <button id="canvasApply">set</button></span>
+      </div>
+      <div id="layersPanel">
+        <div class="ghead"><span>layers</span><span id="layerCount" class="lmeta"></span></div>
+        <div id="layersList"></div>
+      </div>
+    </div>
+  </div>
+  <div id="timeline">
+    <div class="tag">timeline</div>
+    <svg id="tlRuler" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="tlScroll"><svg id="timelineSvg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   LOCKUP — parametric shape layers → clean .riv lockup animations
+   Padlock template + Fill-capable Rive writer (forked from stroke/).
+   ========================================================================= */
+
+const FPS=60;
+const RIVE_FILE_ID=1;
+const K=0.5522847498; // cubic circle handle factor 4*(√2-1)/3
+const COLORS={ body:'#F5F0E6', shackle:'#E3DACB', face:'#000000' };
+
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,f)=>a+(b-a)*f;
+const uid=()=>'L'+Math.random().toString(36).slice(2,9);
+const var_accent=()=>'#8ee06a';
+
+const V={
+  sub:(a,b)=>({x:a.x-b.x,y:a.y-b.y}),
+  len:a=>Math.hypot(a.x,a.y),
+};
+
+/* ----------------------------------------------------------------------------
+   1) STATE
+   ------------------------------------------------------------------------- */
+function newState(){
+  return {
+    name:'Padlock',
+    layers:[],
+    selectedId:null,
+    playing:false,
+    playhead:0,
+    canvas:{w:512,h:512},
+    transparency:1,
+    easing:[0.42,0,0.58,1],
+    preset:'assemble',
+    history:[],
+    future:[],
+  };
+}
+let state=newState();
+
+const canvas=document.getElementById('canvas');
+const canvasPanel=document.getElementById('canvasPanel');
+const stage=document.getElementById('canvasStage');
+const easeCurve=document.getElementById('easeCurve');
+const easePresets=document.getElementById('easePresets');
+const easeText=document.getElementById('easeText');
+const tlSvg=document.getElementById('timelineSvg');
+const tlRuler=document.getElementById('tlRuler');
+const tlScroll=document.getElementById('tlScroll');
+const ctx=canvas?canvas.getContext('2d'):null;
+const stats=document.getElementById('stats');
+
+function selected(){ return state.layers.find(l=>l.id===state.selectedId)||null; }
+function editable(l){ return l && !l.locked && l.visible!==false; }
+
+/* ----------------------------------------------------------------------------
+   2) GEOMETRY — cubic knots for closed fills and open strokes
+   ------------------------------------------------------------------------- */
+function knot(p, inRot, inDist, outRot, outDist){
+  return {p:{x:p.x,y:p.y}, inRot, inDist, outRot, outDist};
+}
+/** 4-knot circle → closed cubic path at (cx,cy) radius r */
+function circleKnots(cx,cy,r){
+  const h=r*K;
+  return [
+    knot({x:cx+r,y:cy}, Math.PI/2,h, -Math.PI/2,h),
+    knot({x:cx,y:cy+r}, Math.PI,h, 0,h),
+    knot({x:cx-r,y:cy}, -Math.PI/2,h, Math.PI/2,h),
+    knot({x:cx,y:cy-r}, 0,h, Math.PI,h),
+  ];
+}
+
+/** Squircle / rounded rect centered at (cx,cy). */
+function roundedRectKnots(cx,cy,w,h,rr){
+  const hw=w/2, hh=h/2;
+  rr=Math.min(rr, hw*0.98, hh*0.98);
+  const k=rr*K;
+  const L=cx-hw, R=cx+hw, T=cy-hh, B=cy+hh;
+  // Clockwise from top edge start (after top-left radius)
+  return [
+    knot({x:L+rr, y:T}, Math.PI, k, 0, 0),
+    knot({x:R-rr, y:T}, Math.PI, 0, 0, k),
+    knot({x:R, y:T+rr}, -Math.PI/2, k, Math.PI/2, 0),
+    knot({x:R, y:B-rr}, -Math.PI/2, 0, Math.PI/2, k),
+    knot({x:R-rr, y:B}, 0, k, Math.PI, 0),
+    knot({x:L+rr, y:B}, 0, 0, Math.PI, k),
+    knot({x:L, y:B-rr}, Math.PI/2, k, -Math.PI/2, 0),
+    knot({x:L, y:T+rr}, Math.PI/2, 0, -Math.PI/2, k),
+  ];
+}
+
+/** Thick U shackle as an open path (centerline). Ends tuck into the body. */
+function shackleKnots(cx, bodyTop, halfW, height){
+  const left={x:cx-halfW, y:bodyTop+8};
+  const right={x:cx+halfW, y:bodyTop+8};
+  const topY=bodyTop-height;
+  // semicircle over the top: left → top → right via cubics
+  const r=halfW;
+  const h=r*K;
+  return [
+    knot(left, -Math.PI/2, 0, -Math.PI/2, Math.max(12, height*0.35)),
+    knot({x:cx-halfW, y:topY+r}, Math.PI/2, Math.max(8,height*0.2), -Math.PI/2, h),
+    knot({x:cx, y:topY}, Math.PI, h, 0, h),
+    knot({x:cx+halfW, y:topY+r}, Math.PI/2, h, -Math.PI/2, Math.max(8,height*0.2)),
+    knot(right, -Math.PI/2, Math.max(12, height*0.35), -Math.PI/2, 0),
+  ];
+}
+
+/** Smile arc (open). */
+function mouthKnots(cx,cy,halfW,depth){
+  const L={x:cx-halfW,y:cy}, R={x:cx+halfW,y:cy};
+  // Single cubic smile: left → right with both handles dipping down
+  const h=halfW*0.65;
+  const dip=Math.atan2(depth, halfW*0.5);
+  return [
+    knot(L, 0, 0, dip, h),
+    knot(R, Math.PI-dip, h, 0, 0),
+  ];
+}
+
+function knotsCentroid(knots){
+  let x=0,y=0; for(const k of knots){x+=k.p.x;y+=k.p.y;}
+  const n=knots.length||1;
+  return {x:x/n,y:y/n};
+}
+
+function knotsToSegments(knots, closed){
+  const segs=[];
+  const n=knots.length;
+  const count=closed?n:n-1;
+  for(let i=0;i<count;i++){
+    const a=knots[i], b=knots[(i+1)%n];
+    const cp1={x:a.p.x+Math.cos(a.outRot)*a.outDist, y:a.p.y+Math.sin(a.outRot)*a.outDist};
+    const cp2={x:b.p.x+Math.cos(b.inRot)*b.inDist,   y:b.p.y+Math.sin(b.inRot)*b.inDist};
+    segs.push({p0:a.p, cp1, cp2, p1:b.p});
+  }
+  return segs;
+}
+
+function cubicAt(seg,t){
+  const mt=1-t,a=mt*mt*mt,b=3*mt*mt*t,c=3*mt*t*t,d=t*t*t;
+  return {x:a*seg.p0.x+b*seg.cp1.x+c*seg.cp2.x+d*seg.p1.x,
+          y:a*seg.p0.y+b*seg.cp1.y+c*seg.cp2.y+d*seg.p1.y};
+}
+function flatten(segments, per=16){
+  const pts=[];
+  for(let s=0;s<segments.length;s++){
+    const seg=segments[s];
+    for(let i=(s===0?0:1);i<=per;i++) pts.push(cubicAt(seg,i/per));
+  }
+  return pts;
+}
+
+/* ----------------------------------------------------------------------------
+   3) PADLOCK TEMPLATE
+   ------------------------------------------------------------------------- */
+function makeLayer(partial){
+  const knots=partial.knots;
+  const c=knotsCentroid(knots);
+  return {
+    id:uid(),
+    name:partial.name,
+    paint:partial.paint,          // 'fill' | 'stroke'
+    closed:!!partial.closed,
+    colour:partial.colour,
+    thickness:partial.thickness||4,
+    knots,
+    visible:true,
+    locked:false,
+    timelineStart:partial.timelineStart??0,
+    timelineDuration:partial.timelineDuration??0.45,
+    holdDuration:0.2,
+    holdToEnd:true,
+    offsetStart:{x:c.x,y:c.y},
+    offsetEnd:{x:c.x,y:c.y},
+    rest:{x:c.x,y:c.y},
+    easing:null,                  // null → document easing
+    useTrim:!!partial.useTrim,
+    hue:partial.hue||120,
+  };
+}
+
+function buildPadlock(W,H){
+  const cx=W/2, cy=H/2+18;
+  const bodyW=W*0.42, bodyH=W*0.42, bodyR=bodyW*0.38;
+  const bodyTop=cy-bodyH/2;
+  const shackleHalf=bodyW*0.28;
+  const shackleH=bodyH*0.42;
+  const eyeY=cy+bodyH*0.08;
+  const eyeR=bodyW*0.055;
+  const eyeGap=bodyW*0.16;
+  const mouthY=cy+bodyH*0.22;
+
+  return [
+    makeLayer({
+      name:'Shackle', paint:'stroke', closed:false, colour:COLORS.shackle,
+      thickness:Math.max(18, bodyW*0.22),
+      knots:shackleKnots(cx, bodyTop, shackleHalf, shackleH),
+      useTrim:true, hue:35,
+      timelineStart:0, timelineDuration:0.5,
+    }),
+    makeLayer({
+      name:'Body', paint:'fill', closed:true, colour:COLORS.body,
+      knots:roundedRectKnots(cx, cy, bodyW, bodyH, bodyR),
+      hue:40, timelineStart:0.15, timelineDuration:0.4,
+    }),
+    makeLayer({
+      name:'Eye L', paint:'fill', closed:true, colour:COLORS.face,
+      knots:circleKnots(cx-eyeGap, eyeY, eyeR),
+      hue:0, timelineStart:0.45, timelineDuration:0.28,
+    }),
+    makeLayer({
+      name:'Eye R', paint:'fill', closed:true, colour:COLORS.face,
+      knots:circleKnots(cx+eyeGap, eyeY, eyeR),
+      hue:0, timelineStart:0.52, timelineDuration:0.28,
+    }),
+    makeLayer({
+      name:'Mouth', paint:'stroke', closed:false, colour:COLORS.face,
+      thickness:Math.max(3, bodyW*0.035),
+      knots:mouthKnots(cx, mouthY, bodyW*0.12, bodyH*0.06),
+      useTrim:true, hue:0,
+      timelineStart:0.62, timelineDuration:0.32,
+    }),
+  ];
+}
+
+function resetPadlock(){
+  state.layers=buildPadlock(state.canvas.w, state.canvas.h);
+  state.selectedId=state.layers[0]?.id||null;
+  applyPreset(state.preset||'assemble', false);
+}
+
+/* ----------------------------------------------------------------------------
+   4) EASING
+   ------------------------------------------------------------------------- */
+const EASE_PRESETS=[
+  {name:'linear',      v:[0,0,1,1]},
+  {name:'ease in',     v:[0.42,0,1,1]},
+  {name:'ease out',    v:[0,0,0.58,1]},
+  {name:'ease in-out', v:[0.42,0,0.58,1]},
+  {name:'expo out',    v:[0.16,1,0.3,1]},
+];
+function easeY(p,x){
+  const x1=p[0],y1=p[1],x2=p[2],y2=p[3];
+  const cx=3*x1,bx=3*(x2-x1)-cx,ax=1-cx-bx;
+  const cy=3*y1,by=3*(y2-y1)-cy,ay=1-cy-by;
+  const sx=t=>((ax*t+bx)*t+cx)*t, sy=t=>((ay*t+by)*t+cy)*t, dx=t=>(3*ax*t+2*bx)*t+cx;
+  x=clamp(x,0,1); let t=x;
+  for(let i=0;i<8;i++){ const e=sx(t)-x; if(Math.abs(e)<1e-6) break; const d=dx(t); if(Math.abs(d)<1e-6) break; t-=e/d; }
+  if(t<0||t>1){ let lo=0,hi=1; for(let i=0;i<24;i++){ t=(lo+hi)/2; if(sx(t)<x) lo=t; else hi=t; } }
+  return clamp(sy(clamp(t,0,1)),0,1);
+}
+const easeStr=v=>`cubic-bezier(${v.map(n=>+(+n).toFixed(2)).join(', ')})`;
+function parseEase(str){
+  const m=(str||'').match(/-?\d*\.?\d+/g);
+  if(!m||m.length<4) return null;
+  const v=m.slice(0,4).map(Number);
+  if(v.some(n=>!Number.isFinite(n))) return null;
+  v[0]=clamp(v[0],0,1); v[2]=clamp(v[2],0,1);
+  return v;
+}
+const easeEq=(a,b)=>!!(a&&b)&&a.every((n,i)=>Math.abs(n-b[i])<0.005);
+function layerEase(l){ return (l&&l.easing)||state.easing; }
+
+/* ----------------------------------------------------------------------------
+   5) PRESETS — fade / assemble / pop / draw
+   ------------------------------------------------------------------------- */
+function applyPreset(name, record=true){
+  state.preset=name;
+  const W=state.canvas.w, H=state.canvas.h;
+  const layers=state.layers;
+  const n=layers.length;
+  layers.forEach((l,i)=>{
+    const rest=l.rest||knotsCentroid(l.knots);
+    l.rest={x:rest.x,y:rest.y};
+    l.offsetEnd={x:rest.x,y:rest.y};
+    l.useTrim=(name==='draw' && l.paint==='stroke');
+    // staggered starts
+    const t0=i*(name==='fade'?0.12:0.1);
+    l.timelineStart=t0;
+    l.timelineDuration=name==='pop'?0.35:0.45;
+    l.holdToEnd=true;
+
+    if(name==='fade'||name==='draw'){
+      l.offsetStart={x:rest.x,y:rest.y};
+    } else if(name==='assemble'){
+      // shackle from above, body from below, face from center scale-ish via y
+      if(l.name==='Shackle') l.offsetStart={x:rest.x, y:rest.y-H*0.18};
+      else if(l.name==='Body') l.offsetStart={x:rest.x, y:rest.y+H*0.12};
+      else if(l.name.startsWith('Eye')) l.offsetStart={x:rest.x+(l.name==='Eye L'?-1:1)*W*0.06, y:rest.y};
+      else l.offsetStart={x:rest.x, y:rest.y+H*0.04};
+    } else if(name==='pop'){
+      l.offsetStart={x:rest.x, y:rest.y+10};
+    }
+  });
+  Array.from(document.getElementById('presets')?.children||[]).forEach(b=>{
+    b.classList.toggle('on', b.dataset.preset===name);
+  });
+  renderAll();
+}
+
+/* ----------------------------------------------------------------------------
+   6) TIMING HELPERS
+   ------------------------------------------------------------------------- */
+function totalDuration(){
+  let aEnd=0.1;
+  for(const l of state.layers){
+    aEnd=Math.max(aEnd, l.timelineStart+l.timelineDuration);
+    if(!l.holdToEnd) aEnd=Math.max(aEnd, l.timelineStart+l.timelineDuration+(l.holdDuration||0));
+  }
+  return aEnd;
+}
+function layerEnd(l){
+  const aEnd=totalDuration();
+  return l.holdToEnd ? aEnd : l.timelineStart+l.timelineDuration+(l.holdDuration||0);
+}
+function layerProgress(l, t){
+  if(t<l.timelineStart) return 0;
+  const u=clamp((t-l.timelineStart)/(l.timelineDuration||1e-6),0,1);
+  return easeY(layerEase(l), u);
+}
+
+/* ----------------------------------------------------------------------------
+   7) CANVAS PREVIEW
+   ------------------------------------------------------------------------- */
+function fitStage(){
+  if(!stage||!canvasPanel) return;
+  const pad=36;
+  const aw=state.canvas.w, ah=state.canvas.h;
+  const availW=Math.max(80,(canvasPanel.clientWidth||800)-pad);
+  const availH=Math.max(80,(canvasPanel.clientHeight||600)-pad);
+  const s=Math.min(availW/aw, availH/ah);
+  const dw=Math.floor(aw*s), dh=Math.floor(ah*s);
+  stage.style.width=dw+'px'; stage.style.height=dh+'px';
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.floor(aw*dpr); canvas.height=Math.floor(ah*dpr);
+  if(ctx) ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function drawLayerPath(c, l, alpha, ox, oy){
+  const segs=knotsToSegments(l.knots, l.closed);
+  if(!segs.length) return;
+  c.save();
+  c.translate(ox, oy);
+  c.globalAlpha=alpha;
+  c.beginPath();
+  c.moveTo(segs[0].p0.x, segs[0].p0.y);
+  for(const s of segs) c.bezierCurveTo(s.cp1.x,s.cp1.y,s.cp2.x,s.cp2.y,s.p1.x,s.p1.y);
+  if(l.closed) c.closePath();
+  if(l.paint==='fill'){
+    c.fillStyle=l.colour; c.fill();
+  } else {
+    c.strokeStyle=l.colour;
+    c.lineWidth=l.thickness||4;
+    c.lineCap='round'; c.lineJoin='round';
+    c.stroke();
+  }
+  c.restore();
+}
+
+function drawTrimmedStroke(c, l, progress, alpha, ox, oy){
+  const segs=knotsToSegments(l.knots, false);
+  const pts=flatten(segs, 28);
+  if(pts.length<2) return;
+  let total=0; const dist=[0];
+  for(let i=1;i<pts.length;i++){ total+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y); dist.push(total); }
+  const target=total*clamp(progress,0,1);
+  c.save();
+  c.translate(ox,oy);
+  c.globalAlpha=alpha;
+  c.strokeStyle=l.colour;
+  c.lineWidth=l.thickness||4;
+  c.lineCap='round'; c.lineJoin='round';
+  c.beginPath();
+  c.moveTo(pts[0].x, pts[0].y);
+  for(let i=1;i<pts.length;i++){
+    if(dist[i]<=target) c.lineTo(pts[i].x, pts[i].y);
+    else {
+      const segLen=dist[i]-dist[i-1]||1;
+      const f=(target-dist[i-1])/segLen;
+      c.lineTo(lerp(pts[i-1].x,pts[i].x,f), lerp(pts[i-1].y,pts[i].y,f));
+      break;
+    }
+  }
+  c.stroke();
+  c.restore();
+}
+
+function renderCanvas(){
+  if(!ctx) return;
+  const W=state.canvas.w, H=state.canvas.h;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#ffffff';
+  ctx.fillRect(0,0,W,H);
+  const t=state.playing||state.playhead>0 ? state.playhead : totalDuration(); // scrub or show final when idle at 0 after reset — show final pose when not playing and playhead 0
+  const showT = state.playing ? state.playhead : (state.playhead>0 ? state.playhead : totalDuration());
+
+  for(const l of state.layers){
+    if(l.visible===false) continue;
+    const end=layerEnd(l);
+    if(showT < l.timelineStart) continue;
+    if(showT > end) continue;
+    const p=layerProgress(l, showT);
+    const rest=l.rest||knotsCentroid(l.knots);
+    const pos={
+      x:lerp(l.offsetStart.x, l.offsetEnd.x, p),
+      y:lerp(l.offsetStart.y, l.offsetEnd.y, p),
+    };
+    const ox=pos.x-rest.x, oy=pos.y-rest.y;
+    const tr=state.transparency;
+    if(l.paint==='stroke' && l.useTrim){
+      drawTrimmedStroke(ctx, l, p, tr, ox, oy);
+    } else {
+      drawLayerPath(ctx, l, tr*p, ox, oy);
+    }
+  }
+
+  if(stats){
+    const sel=selected();
+    stats.textContent=`${W}×${H} · ${state.layers.length} layers · ${Math.round(state.transparency*100)}% · ${totalDuration().toFixed(2)}s`
+      +(sel?` · ${sel.name}`:'');
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   8) LAYERS UI + TIMELINE + EASING UI
+   ------------------------------------------------------------------------- */
+function renderLayers(){
+  const list=document.getElementById('layersList');
+  const count=document.getElementById('layerCount');
+  if(count) count.textContent=state.layers.length+'';
+  if(!list) return;
+  list.innerHTML=state.layers.map(l=>{
+    const sel=l.id===state.selectedId?' sel':'';
+    return `<div class="lrow${sel}" data-id="${l.id}">
+      <span class="swatch" style="background:${l.colour}"></span>
+      <span class="lname">${l.name}</span>
+      <span class="lmeta">${l.paint}${l.useTrim?' · trim':''}</span>
+      <button class="lbtn${l.visible===false?'':' on'}" data-act="vis" title="visibility">${l.visible===false?'○':'●'}</button>
+      <button class="lbtn${l.locked?' on':''}" data-act="lock" title="lock">${l.locked?'🔒':'🔓'}</button>
+    </div>`;
+  }).join('') || '<div class="empty" style="color:var(--dim);padding:8px">no layers</div>';
+}
+
+function renderEasing(){
+  if(!easeCurve) return;
+  const l=selected();
+  const v=layerEase(l);
+  let d='M 0 100';
+  for(let i=1;i<=48;i++){ const x=i/48; d+=` L ${(x*100).toFixed(2)} ${((1-easeY(v,x))*100).toFixed(2)}`; }
+  let svg=`<line x1="0" y1="100" x2="100" y2="0" stroke="#1d1d21" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  svg+=`<path d="${d}" fill="none" stroke="${var_accent()}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  easeCurve.innerHTML=svg;
+  Array.from(easePresets?.children||[]).forEach((b,i)=>b.classList.toggle('on', easeEq(EASE_PRESETS[i].v,v)));
+  if(easeText && document.activeElement!==easeText) easeText.value=easeStr(v);
+}
+
+function renderTimeline(){
+  if(!tlSvg||!tlRuler) return;
+  const dur=Math.max(totalDuration(), 0.5);
+  const W=tlScroll?.clientWidth||900;
+  const rowH=28, padL=88, padR=12;
+  const usable=W-padL-padR;
+  const y0=4;
+  const H=Math.max(40, state.layers.length*rowH+8);
+  tlSvg.setAttribute('height', H);
+  tlSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  let svg='';
+  state.layers.forEach((l,i)=>{
+    const y=y0+i*rowH;
+    const x0=padL+(l.timelineStart/dur)*usable;
+    const x1=padL+((l.timelineStart+l.timelineDuration)/dur)*usable;
+    const xEnd=padL+(layerEnd(l)/dur)*usable;
+    const sel=l.id===state.selectedId;
+    svg+=`<text x="8" y="${y+14}" fill="#6e6e76" font-size="10">${l.name}</text>`;
+    svg+=`<rect x="${x0.toFixed(1)}" y="${y+4}" width="${Math.max(2,xEnd-x0).toFixed(1)}" height="16" rx="3" fill="#1a1a22" stroke="#2a2a30"/>`;
+    svg+=`<rect x="${x0.toFixed(1)}" y="${y+4}" width="${Math.max(2,x1-x0).toFixed(1)}" height="16" rx="3" fill="hsl(${l.hue} 40% 32%)" stroke="${sel?'#fff':'none'}" stroke-width="${sel?1:0}"/>`;
+  });
+  // playhead
+  const px=padL+(clamp(state.playhead,0,dur)/dur)*usable;
+  svg+=`<line x1="${px}" y1="0" x2="${px}" y2="${H}" stroke="#8ee06a" stroke-width="1"/>`;
+  tlSvg.innerHTML=svg;
+
+  // ruler
+  let rs='';
+  const ticks=Math.ceil(dur*2);
+  for(let i=0;i<=ticks;i++){
+    const sec=i/2;
+    const x=padL+(sec/dur)*usable;
+    rs+=`<line x1="${x}" y1="10" x2="${x}" y2="18" stroke="#2a2a30"/>`;
+    rs+=`<text x="${x+2}" y="9" fill="#46464d" font-size="9">${sec.toFixed(1)}s</text>`;
+  }
+  tlRuler.setAttribute('viewBox',`0 0 ${W} 18`);
+  tlRuler.innerHTML=rs;
+}
+
+function syncLayerControls(){
+  const l=selected();
+  const col=document.getElementById('colour');
+  const th=document.getElementById('thickness');
+  const tv=document.getElementById('thickVal');
+  const thickCtl=document.getElementById('thickCtl');
+  if(!l){ if(thickCtl) thickCtl.style.opacity='.4'; return; }
+  if(col && document.activeElement!==col) col.value=l.colour;
+  if(th){ th.value=l.thickness; if(tv) tv.textContent=(+l.thickness).toFixed(1); }
+  if(thickCtl) thickCtl.style.opacity=l.paint==='stroke'?'1':'.35';
+}
+
+function renderAll(){
+  renderLayers();
+  renderEasing();
+  renderTimeline();
+  syncLayerControls();
+  renderCanvas();
+}
+
+/* ----------------------------------------------------------------------------
+   9) RIVE EXPORTER — Fill-capable fork of stroke's writer
+   ------------------------------------------------------------------------- */
+const T={ Backboard:23, Artboard:1, Shape:3, PointsPath:16, CubicVertex:6,
+          Fill:20, Stroke:24, SolidColor:18, TrimPath:47, LinearAnimation:31,
+          KeyedObject:25, KeyedProperty:26, KeyFrameDouble:30 };
+const P={ name:4, parentId:5, width:7, height:8, x:13, y:14, opacity:18,
+          vx:24, vy:25, isClosed:32, color:37, fillRule:40, thickness:47, cap:48, join:49,
+          inRot:84, inDist:85, outRot:86, outDist:87,
+          trimStart:114, trimEnd:115, trimOffset:116, trimMode:117,
+          animName:55, fps:56, duration:57, loop:59,
+          objectId:51, propertyKey:53, frame:67, interp:68, value:70 };
+const C={ uint:0, bool:0, str:1, dbl:2, color:3 };
+
+function hexToRiveColor(hex){
+  const h=(hex||'#ffffff').replace('#','');
+  const r=parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
+  return ((0xff<<24)|(r<<16)|(g<<8)|b)>>>0;
+}
+
+function exportRiv(layers, W, H, transparency=1){
+  const tr=clamp(transparency,0,1);
+  const body=[];
+  const toc=new Map();
+  const enc=new TextEncoder();
+
+  const u8=b=>body.push(b&0xff);
+  const varuint=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; body.push(b); }while(n); };
+  const u32le=n=>{ n=n>>>0; body.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  const f32=v=>{ const a=new Uint8Array(4); new DataView(a.buffer).setFloat32(0,v,true); body.push(a[0],a[1],a[2],a[3]); };
+  const str=s=>{ const b=enc.encode(s); varuint(b.length); for(const c of b) body.push(c); };
+
+  const obj=typeKey=>varuint(typeKey);
+  const end=()=>varuint(0);
+  const pUint =(k,v)=>{ toc.set(k,C.uint);  varuint(k); varuint(v); };
+  const pBool =(k,v)=>{ toc.set(k,C.bool);  varuint(k); u8(v?1:0); };
+  const pStr  =(k,v)=>{ toc.set(k,C.str);   varuint(k); str(v); };
+  const pDbl  =(k,v)=>{ toc.set(k,C.dbl);   varuint(k); f32(v); };
+  const pColor=(k,v)=>{ toc.set(k,C.color); varuint(k); u32le(v); };
+
+  obj(T.Backboard); end();
+  obj(T.Artboard);
+    pStr(P.name,'Main'); pDbl(P.width,W); pDbl(P.height,H);
+  end();
+
+  let next=1;
+  let aEnd=0.1;
+  for(const l of layers){
+    if(l.visible===false) continue;
+    aEnd=Math.max(aEnd, l.timelineStart+l.timelineDuration);
+    if(!l.holdToEnd) aEnd=Math.max(aEnd, l.timelineStart+l.timelineDuration+(l.holdDuration||0));
+  }
+  const layerEndT = l => l.holdToEnd ? aEnd : l.timelineStart+l.timelineDuration+(l.holdDuration||0);
+  const total=aEnd;
+  const durFrames=Math.max(1, Math.ceil(total*FPS));
+  const meta=[];
+
+  // reverse emit so later layers paint on top
+  const visible=layers.map((l,si)=>({l,si})).filter(({l})=>l.visible!==false).reverse();
+  visible.forEach(({l,si})=>{
+    const rest=l.rest||knotsCentroid(l.knots);
+    const SHAPE=next++;
+    obj(T.Shape); pStr(P.name, l.name||`Layer_${si+1}`); pUint(P.parentId,0); pDbl(P.opacity,1); end();
+
+    const PATH=next++;
+    obj(T.PointsPath);
+      pUint(P.parentId,SHAPE);
+      if(l.closed) pBool(P.isClosed, true);
+    end();
+
+    const knots=l.knots.slice();
+    let bx0=Infinity,by0=Infinity,bx1=-Infinity,by1=-Infinity;
+    for(const k of knots){ bx0=Math.min(bx0,k.p.x);by0=Math.min(by0,k.p.y);bx1=Math.max(bx1,k.p.x);by1=Math.max(by1,k.p.y); }
+    const nudgeW=(bx1-bx0)<0.1, nudgeH=(by1-by0)<0.1;
+    knots.forEach((k,ki)=>{
+      next++;
+      const last=ki===knots.length-1;
+      obj(T.CubicVertex);
+        pUint(P.parentId,PATH);
+        pDbl(P.vx, k.p.x + (last&&nudgeW?0.12:0));
+        pDbl(P.vy, k.p.y + (last&&nudgeH?0.12:0));
+        pDbl(P.inRot,k.inRot);   pDbl(P.inDist,k.inDist);
+        pDbl(P.outRot,k.outRot); pDbl(P.outDist,k.outDist);
+      end();
+    });
+
+    let TRIM=null;
+    if(l.paint==='fill'){
+      const FILL=next++;
+      obj(T.Fill); pUint(P.parentId,SHAPE); pUint(P.fillRule,0); end();
+      next++;
+      obj(T.SolidColor); pUint(P.parentId,FILL); pColor(P.color, hexToRiveColor(l.colour)); end();
+    } else {
+      const STROKE=next++;
+      obj(T.Stroke);
+        pUint(P.parentId,SHAPE); pDbl(P.thickness, l.thickness??4); pUint(P.cap,1); pUint(P.join,1);
+      end();
+      next++;
+      obj(T.SolidColor); pUint(P.parentId,STROKE); pColor(P.color, hexToRiveColor(l.colour)); end();
+      if(l.useTrim){
+        TRIM=next++;
+        obj(T.TrimPath);
+          pUint(P.parentId,STROKE);
+          pDbl(P.trimStart,0); pDbl(P.trimEnd,0); pDbl(P.trimOffset,0); pUint(P.trimMode,1);
+        end();
+      }
+    }
+
+    meta.push({l, rest, SHAPE, TRIM});
+  });
+
+  obj(T.LinearAnimation);
+    pStr(P.animName,'Play'); pUint(P.fps,FPS); pUint(P.duration,durFrames); pUint(P.loop,1);
+  end();
+
+  const kf=(frame,val)=>{ obj(T.KeyFrameDouble); pUint(P.frame,frame); pUint(P.interp,1); pDbl(P.value,val); end(); };
+  const keyedProp=(propKey, frames)=>{
+    obj(T.KeyedProperty); pUint(P.propertyKey,propKey); end();
+    strictlyIncreasing(frames).forEach(([f,v])=>kf(f,v));
+  };
+  function strictlyIncreasing(frames){
+    const out=[]; let last=-1;
+    for(const [f,v] of frames){ const ff=Math.max(f,last+1); out.push([ff,v]); last=ff; }
+    return out;
+  }
+
+  meta.forEach(m=>{
+    const l=m.l;
+    const ease=l.easing||[0.42,0,0.58,1];
+    const fStart=Math.round(l.timelineStart*FPS);
+    const fDraw =Math.round((l.timelineStart+l.timelineDuration)*FPS);
+    const fEnd  =Math.round(layerEndT(l)*FPS);
+    const STEPS = easeEq(ease,[0,0,1,1]) ? 1 : 14;
+
+    if(m.TRIM!=null){
+      obj(T.KeyedObject); pUint(P.objectId,m.TRIM); end();
+      const trimK=[];
+      for(let i=0;i<=STEPS;i++)
+        trimK.push([Math.round(lerp(fStart,Math.max(fDraw,fStart+1),i/STEPS)), easeY(ease,i/STEPS)]);
+      keyedProp(P.trimEnd, trimK);
+    }
+
+    obj(T.KeyedObject); pUint(P.objectId,m.SHAPE); end();
+    // opacity: 0 → tr across draw (unless trim-only stroke, then hold tr while present)
+    const opK=[];
+    if(m.TRIM!=null){
+      opK.push([fStart, tr], [fEnd, tr]);
+    } else {
+      for(let i=0;i<=STEPS;i++)
+        opK.push([Math.round(lerp(fStart,Math.max(fDraw,fStart+1),i/STEPS)), tr*easeY(ease,i/STEPS)]);
+      if(fEnd>fDraw) opK.push([fEnd, tr]);
+    }
+    if(fEnd<durFrames) opK.push([fEnd+1, 0]);
+    keyedProp(P.opacity, opK);
+
+    const drift = Math.abs(l.offsetStart.x-l.offsetEnd.x)>0.01 || Math.abs(l.offsetStart.y-l.offsetEnd.y)>0.01;
+    if(drift){
+      const xK=[], yK=[];
+      for(let i=0;i<=STEPS;i++){
+        const f=Math.round(lerp(fStart,Math.max(fDraw,fStart+1),i/STEPS));
+        const e=easeY(ease,i/STEPS);
+        xK.push([f, lerp(l.offsetStart.x,l.offsetEnd.x,e)-m.rest.x]);
+        yK.push([f, lerp(l.offsetStart.y,l.offsetEnd.y,e)-m.rest.y]);
+      }
+      keyedProp(P.x, xK);
+      keyedProp(P.y, yK);
+    }
+  });
+
+  const head=[];
+  const hVar=n=>{ n=n>>>0; do{ let b=n&0x7f; n>>>=7; if(n) b|=0x80; head.push(b); }while(n); };
+  const hU32=n=>{ n=n>>>0; head.push(n&0xff,(n>>>8)&0xff,(n>>>16)&0xff,(n>>>24)&0xff); };
+  head.push(0x52,0x49,0x56,0x45);
+  hVar(7); hVar(0); hVar(RIVE_FILE_ID);
+  const keys=[...toc.keys()].sort((a,b)=>a-b);
+  for(const k of keys) hVar(k);
+  hVar(0);
+  let word=0;
+  for(let i=0;i<keys.length;i++){
+    word |= (toc.get(keys[i])&3) << ((i%4)*2);
+    if(i%4===3){ hU32(word); word=0; }
+  }
+  if(keys.length%4!==0) hU32(word);
+
+  return new Uint8Array(head.concat(body));
+}
+
+/* ----------------------------------------------------------------------------
+   10) EVENTS + PLAYBACK
+   ------------------------------------------------------------------------- */
+function setEasing(v){
+  v=[clamp(v[0],0,1),v[1],clamp(v[2],0,1),v[3]];
+  state.easing=v.slice();
+  const l=selected();
+  if(l && editable(l)) l.easing=v.slice();
+  renderEasing(); renderCanvas();
+}
+
+if(easePresets){
+  easePresets.innerHTML=EASE_PRESETS.map((p,i)=>`<button data-ease="${i}">${p.name}</button>`).join('');
+  easePresets.addEventListener('click',e=>{
+    const b=e.target.closest('button[data-ease]'); if(!b) return;
+    setEasing(EASE_PRESETS[+b.dataset.ease].v.slice());
+  });
+}
+document.getElementById('easeCopy')?.addEventListener('click',()=>{
+  const v=layerEase(selected());
+  navigator.clipboard?.writeText(easeStr(v));
+});
+easeText?.addEventListener('change',()=>{
+  const v=parseEase(easeText.value); if(v) setEasing(v);
+});
+
+document.getElementById('presets')?.addEventListener('click',e=>{
+  const b=e.target.closest('button[data-preset]'); if(!b) return;
+  applyPreset(b.dataset.preset);
+});
+
+document.getElementById('layersList')?.addEventListener('click',e=>{
+  const btn=e.target.closest('[data-act]');
+  const row=e.target.closest('.lrow'); if(!row) return;
+  const l=state.layers.find(x=>x.id===row.dataset.id); if(!l) return;
+  if(btn){
+    e.stopPropagation();
+    if(btn.dataset.act==='vis') l.visible=l.visible===false?true:false;
+    if(btn.dataset.act==='lock') l.locked=!l.locked;
+    renderAll(); return;
+  }
+  state.selectedId=l.id;
+  renderAll();
+});
+
+document.getElementById('colour')?.addEventListener('input',e=>{
+  const l=selected(); if(!l||!editable(l)) return;
+  l.colour=e.target.value; renderAll();
+});
+document.getElementById('thickness')?.addEventListener('input',e=>{
+  const l=selected(); if(!l||!editable(l)||l.paint!=='stroke') return;
+  l.thickness=+e.target.value;
+  const tv=document.getElementById('thickVal'); if(tv) tv.textContent=(+l.thickness).toFixed(1);
+  renderCanvas();
+});
+document.getElementById('globalOpacity')?.addEventListener('input',e=>{
+  state.transparency=(+e.target.value)/100;
+  const ov=document.getElementById('opacityVal'); if(ov) ov.textContent=e.target.value;
+  renderCanvas();
+});
+document.getElementById('canvasApply')?.addEventListener('click',()=>{
+  const w=+document.getElementById('canvasW').value||512;
+  const h=+document.getElementById('canvasH').value||512;
+  state.canvas={w:clamp(w,64,4096),h:clamp(h,64,4096)};
+  resetPadlock();
+  fitStage(); renderAll();
+});
+document.getElementById('resetBtn')?.addEventListener('click',()=>{
+  resetPadlock(); fitStage(); renderAll();
+});
+
+document.getElementById('exportBtn')?.addEventListener('click',()=>{
+  if(!state.layers.length){ alert('No layers.'); return; }
+  // bake document/layer easing so the exporter stays pure (no DOM state)
+  const layers=state.layers.map(l=>({...l, easing:layerEase(l).slice()}));
+  const bytes=exportRiv(layers, state.canvas.w, state.canvas.h, state.transparency);
+  const blob=new Blob([bytes],{type:'application/octet-stream'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url;
+  a.download=((state.name||'lockup').trim().replace(/[^\w.-]+/g,'_')||'lockup')+'.riv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+
+let raf=0, lastTs=0;
+function tick(ts){
+  if(!state.playing){ raf=0; return; }
+  const dt=(ts-(lastTs||ts))/1000; lastTs=ts;
+  state.playhead+=dt;
+  if(state.playhead>=totalDuration()){ state.playhead=totalDuration(); state.playing=false;
+    const b=document.getElementById('playBtn'); if(b) b.textContent='▶ play'; }
+  renderCanvas(); renderTimeline();
+  if(state.playing) raf=requestAnimationFrame(tick);
+}
+document.getElementById('playBtn')?.addEventListener('click',()=>{
+  state.playing=!state.playing;
+  const b=document.getElementById('playBtn');
+  if(state.playing){
+    if(state.playhead>=totalDuration()-0.001) state.playhead=0;
+    if(b) b.textContent='❚❚ pause';
+    lastTs=0; raf=requestAnimationFrame(tick);
+  } else {
+    if(b) b.textContent='▶ play';
+  }
+});
+
+// scrub timeline
+tlSvg?.addEventListener('pointerdown',e=>{
+  const dur=Math.max(totalDuration(),0.5);
+  const W=tlScroll?.clientWidth||900;
+  const padL=88, padR=12, usable=W-padL-padR;
+  const rect=tlSvg.getBoundingClientRect();
+  const x=e.clientX-rect.left;
+  state.playhead=clamp((x-padL)/usable,0,1)*dur;
+  state.playing=false;
+  const b=document.getElementById('playBtn'); if(b) b.textContent='▶ play';
+  renderCanvas(); renderTimeline();
+});
+
+window.addEventListener('resize',()=>{ fitStage(); renderAll(); });
+
+/* ----------------------------------------------------------------------------
+   boot
+   ------------------------------------------------------------------------- */
+resetPadlock();
+fitStage();
+renderAll();
+</script>
+</body>
+</html>
