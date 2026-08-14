@@ -49,6 +49,7 @@ Exporter is a self-contained fork of stroke's binary writer, plus:
 ## Mascot → Lottie
 
 **Playbook (reuse for future clips):** [`LOTTIE_PLAYBOOK.md`](LOTTIE_PLAYBOOK.md)  
+**From a photo / no reference:** [`LOTTIE_FROM_STILL.md`](LOTTIE_FROM_STILL.md)  
 Plan: [`MOV_TO_LOTTIE_PLAN.md`](MOV_TO_LOTTIE_PLAN.md). Scripts under `source/` + `lottie/`.
 
 ```bash
