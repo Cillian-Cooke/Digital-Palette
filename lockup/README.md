@@ -45,3 +45,20 @@ Exporter is a self-contained fork of stroke's binary writer, plus:
 - Fill core type **20**, `fillRule` **40**
 - PointsPath `isClosed` **32** (bool) for body / eyes
 - Shape opacity + x/y for assemble; TrimPath `trimEnd` for draw-on strokes
+
+## Mascot → Lottie
+
+**Playbook (reuse for future clips):** [`LOTTIE_PLAYBOOK.md`](LOTTIE_PLAYBOOK.md)  
+Plan: [`MOV_TO_LOTTIE_PLAN.md`](MOV_TO_LOTTIE_PLAN.md). Scripts under `source/` + `lottie/`.
+
+```bash
+# preview (from lockup/lottie)
+python3 -m http.server 8767
+# http://localhost:8767/preview.html
+
+# rebuild RGBA after tuning outline
+lockup/source/.venv/bin/python lockup/source/rebuild_rgba.py
+
+# re-trace Lotties from frames_rgba
+lockup/source/.venv/bin/python lockup/lottie/build_lottie.py
+```

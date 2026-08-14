@@ -2,3 +2,27 @@
 node_modules/
 .DS_Store
 *.log
+**/__pycache__/
+lockup/source/.venv/
+lockup/source/bin/
+lockup/source/frames_raw/
+lockup/source/frames_rgba/
+lockup/source/mascot.mov
+lockup/source/refs/debug_*.png
+lockup/source/refs/qc_*.png
+lockup/source/refs/br_*.png
+lockup/source/refs/crop_*.png
+# Huge full dump — segments are committed for demo sharing
+lockup/lottie/export/mascot_full.json
+lockup/lottie/export/mascot_f*_still.json
+lockup/lottie/work/
+lockup/lottie/qc/**/_tmp_*.png
+lockup/lottie/qc/diff_*.png
+lockup/lottie/qc/pred_*.png
+lockup/lottie/qc/pred_fix_*.png
+lockup/lottie/qc/gt_*.png
+lockup/lottie/qc/ink_mismatch_*.png
+lockup/lottie/qc/player_*.png
+lockup/lottie/qc/wave_play_*.png
+lockup/lottie/qc/player_vs_plate_*.png
+lockup/lottie/qc/compare_f*.png

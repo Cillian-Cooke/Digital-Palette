@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<style>html,body{margin:0;background:#ff00ff}#c{width:1440px;height:1440px}</style>
+</head><body>
+<div id="c"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+<script>
+(async () => {
+  const p = new URLSearchParams(location.search);
+  const src = p.get('src') || 'export/mascot_wave.json';
+  const frame = parseInt(p.get('frame') || '0', 10);
+  const data = await (await fetch(src)).json();
+  const anim = lottie.loadAnimation({
+    container: document.getElementById('c'),
+    renderer: 'svg',
+    loop: false,
+    autoplay: false,
+    animationData: data,
+  });
+  await new Promise(r => anim.addEventListener('DOMLoaded', r));
+  anim.goToAndStop(frame, true);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  document.title = 'READY_' + frame;
+  document.documentElement.setAttribute('data-ready', '1');
+})();
+</script>
+</body></html>

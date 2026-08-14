@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Mascot Lottie preview</title>
+  <style>
+    :root { color-scheme: light; --ink: #f2f2f2; --accent: #7dd3a0; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; font: 14px/1.4 "IBM Plex Sans", system-ui, sans-serif;
+      background: #2e2e2e; color: var(--ink);
+      display: grid; grid-template-rows: auto 1fr;
+    }
+    header {
+      display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center;
+      padding: 14px 18px; background: #1f1f1f; border-bottom: 1px solid #0006;
+    }
+    h1 { font-size: 15px; font-weight: 600; margin: 0; }
+    select, button {
+      font: inherit; color: var(--ink); background: #3a3a3a; border: 1px solid #555;
+      border-radius: 6px; padding: 6px 10px; cursor: pointer;
+    }
+    #status { opacity: 0.7; font-size: 12px; }
+    main { display: grid; place-items: center; padding: 24px; }
+    #stage {
+      width: min(90vw, 720px); aspect-ratio: 1; background: #ff00ff;
+      border-radius: 8px; overflow: hidden; box-shadow: 0 12px 40px #0008;
+      position: relative;
+    }
+    #stage svg, #stage canvas { width: 100% !important; height: 100% !important; display: block; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Mascot Lottie</h1>
+    <label>Clip
+      <select id="clip">
+        <option value="export/mascot_intro.json">intro</option>
+        <option value="export/mascot_wave.json" selected>wave</option>
+        <option value="export/mascot_sit.json">sit</option>
+        <option value="export/mascot_full.json">full</option>
+      </select>
+    </label>
+    <button type="button" id="play">Play</button>
+    <button type="button" id="pause">Pause</button>
+    <label>Frame <input id="frame" type="range" min="0" max="143" value="0" style="width:180px" /></label>
+    <span id="status">Loading…</span>
+  </header>
+  <main>
+    <div id="stage"></div>
+  </main>
+  <script>
+    const stage = document.getElementById('stage');
+    const clip = document.getElementById('clip');
+    const status = document.getElementById('status');
+    const frame = document.getElementById('frame');
+    let anim = null;
+
+    async function load() {
+      if (anim) { anim.destroy(); anim = null; }
+      stage.innerHTML = '';
+      status.textContent = 'Fetching ' + clip.value + '…';
+      const t0 = performance.now();
+      const data = await (await fetch(clip.value)).json();
+      status.textContent = `Parsed ${(data.op - data.ip)}f in ${((performance.now()-t0)/1000).toFixed(1)}s — mounting…`;
+      anim = lottie.loadAnimation({
+        container: stage,
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        animationData: data,
+      });
+      frame.max = String(Math.max(0, (data.op - data.ip) - 1));
+      anim.addEventListener('DOMLoaded', () => {
+        status.textContent = `Playing ${clip.value} @ ${data.fr}fps`;
+      });
+      anim.addEventListener('enterFrame', (e) => {
+        frame.value = String(Math.round(e.currentTime));
+      });
+    }
+    clip.addEventListener('change', load);
+    document.getElementById('play').onclick = () => anim && anim.play();
+    document.getElementById('pause').onclick = () => anim && anim.pause();
+    frame.addEventListener('input', () => {
+      if (!anim) return;
+      anim.goToAndStop(Number(frame.value), true);
+      status.textContent = `Frame ${frame.value}`;
+    });
+    load().catch(err => { status.textContent = 'Error: ' + err; console.error(err); });
+  </script>
+</body>
+</html>

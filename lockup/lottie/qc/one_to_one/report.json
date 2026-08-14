@@ -1,0 +1,156 @@
+[
+  {
+    "iou": 0.9347228030019588,
+    "mad": 4.998854610597035,
+    "close": 0.9785059216877399,
+    "miss": 2862,
+    "extra": 44594,
+    "clip": "intro",
+    "lottie_frame": 0,
+    "source_frame": 1,
+    "bytes": 76265
+  },
+  {
+    "iou": 0.9331445123913743,
+    "mad": 4.965408525437222,
+    "close": 0.9761917901455993,
+    "miss": 2015,
+    "extra": 44722,
+    "clip": "intro",
+    "lottie_frame": 48,
+    "source_frame": 49,
+    "bytes": 82483
+  },
+  {
+    "iou": 0.9328159876323401,
+    "mad": 4.636245559967785,
+    "close": 0.9770181294526404,
+    "miss": 1954,
+    "extra": 44459,
+    "clip": "intro",
+    "lottie_frame": 72,
+    "source_frame": 73,
+    "bytes": 79418
+  },
+  {
+    "iou": 0.935256537182435,
+    "mad": 4.849065036727871,
+    "close": 0.976668524543416,
+    "miss": 2840,
+    "extra": 45226,
+    "clip": "intro",
+    "lottie_frame": 120,
+    "source_frame": 121,
+    "bytes": 81793
+  },
+  {
+    "iou": 0.9349265070462884,
+    "mad": 4.411302737588924,
+    "close": 0.9784652236490677,
+    "miss": 2587,
+    "extra": 44660,
+    "clip": "intro",
+    "lottie_frame": 143,
+    "source_frame": 144,
+    "bytes": 77436
+  },
+  {
+    "iou": 0.9349856673136234,
+    "mad": 4.450599250108653,
+    "close": 0.9784770870625327,
+    "miss": 2613,
+    "extra": 44585,
+    "clip": "wave",
+    "lottie_frame": 0,
+    "source_frame": 145,
+    "bytes": 77723
+  },
+  {
+    "iou": 0.9362489672717159,
+    "mad": 4.615069709285365,
+    "close": 0.9765993479270692,
+    "miss": 2065,
+    "extra": 44696,
+    "clip": "wave",
+    "lottie_frame": 36,
+    "source_frame": 181,
+    "bytes": 87242
+  },
+  {
+    "iou": 0.9369642936672781,
+    "mad": 4.551884468796723,
+    "close": 0.9769104679267242,
+    "miss": 1990,
+    "extra": 44717,
+    "clip": "wave",
+    "lottie_frame": 72,
+    "source_frame": 217,
+    "bytes": 89675
+  },
+  {
+    "iou": 0.9366276327669151,
+    "mad": 4.849179881315144,
+    "close": 0.976557486957998,
+    "miss": 2435,
+    "extra": 44593,
+    "clip": "wave",
+    "lottie_frame": 100,
+    "source_frame": 245,
+    "bytes": 82459
+  },
+  {
+    "iou": 0.9369065381846553,
+    "mad": 4.505400807295132,
+    "close": 0.9776555817404207,
+    "miss": 2423,
+    "extra": 44641,
+    "clip": "wave",
+    "lottie_frame": 143,
+    "source_frame": 288,
+    "bytes": 82419
+  },
+  {
+    "iou": 0.937066369243443,
+    "mad": 4.698448830236179,
+    "close": 0.9770200243471857,
+    "miss": 2576,
+    "extra": 44483,
+    "clip": "sit",
+    "lottie_frame": 0,
+    "source_frame": 289,
+    "bytes": 82781
+  },
+  {
+    "iou": 0.9363555606111079,
+    "mad": 4.855687144503755,
+    "close": 0.9766148007919441,
+    "miss": 2579,
+    "extra": 44420,
+    "clip": "sit",
+    "lottie_frame": 36,
+    "source_frame": 325,
+    "bytes": 80092
+  },
+  {
+    "iou": 0.9364580836255337,
+    "mad": 4.937043046986557,
+    "close": 0.976498526276817,
+    "miss": 2539,
+    "extra": 44378,
+    "clip": "sit",
+    "lottie_frame": 51,
+    "source_frame": 340,
+    "bytes": 79687
+  },
+  {
+    "iou": 0.936269430753582,
+    "mad": 4.959766016224174,
+    "close": 0.9769396461311233,
+    "miss": 2602,
+    "extra": 44452,
+    "clip": "sit",
+    "lottie_frame": 72,
+    "source_frame": 361,
+    "bytes": 80240
+  }
+]
