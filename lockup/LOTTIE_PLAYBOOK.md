@@ -5,6 +5,7 @@ Hard-won rules from the first mascot convert (`lockup/source/mascot.mov` →
 re-learn the same failures.
 
 Related: plan of record [`MOV_TO_LOTTIE_PLAN.md`](MOV_TO_LOTTIE_PLAN.md) ·
+**runbook (every convert)** [`LOTTIE_RUNBOOK.md`](LOTTIE_RUNBOOK.md) ·
 segments [`source/segments.md`](source/segments.md) ·
 from photo / no-ref [`LOTTIE_FROM_STILL.md`](LOTTIE_FROM_STILL.md) · scripts below.
 

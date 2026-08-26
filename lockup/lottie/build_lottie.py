@@ -14,6 +14,7 @@ even with hold keys). Hold keys @ source fps.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import cv2
@@ -21,30 +22,39 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-FRAMES = ROOT / "source" / "frames_rgba"
-EXPORT = ROOT / "lottie" / "export"
+_JOB = Path(os.environ["LOCKUP_JOB"]) if os.environ.get("LOCKUP_JOB") else ROOT / "source"
+FRAMES = _JOB / "frames_rgba"
+EXPORT = Path(os.environ["LOCKUP_EXPORT"]) if os.environ.get("LOCKUP_EXPORT") else ROOT / "lottie" / "export"
 QC = ROOT / "lottie" / "qc"
+if os.environ.get("LOCKUP_JOB"):
+    QC = ROOT / "lottie" / "qc" / Path(os.environ["LOCKUP_JOB"]).name
 
-W = H = 1440
-FPS = 24
-SMALL_HOLE = 15000  # eyes/mouth-sized; larger = shackle
-MIN_AREA = 20
+W = int(os.environ.get("LOCKUP_W", "960"))
+H = int(os.environ.get("LOCKUP_H", "960"))
+FPS = float(os.environ.get("LOCKUP_FPS", "24"))
+SMALL_HOLE = int(os.environ.get("LOCKUP_SMALL_HOLE", str(int(7000 * (W / 960) * (H / 960)))))
+MIN_AREA = 12
 
-# Fixed resample budgets (player-safe morph/hold)
-CREAM_N = 256
-HOLE_N = 128
-INK_N = 192
-MOUTH_N = 96
+# Fixed resample budgets (player-safe morph/hold) — higher = tighter plate match
+CREAM_N = 320
+HOLE_N = 160
+INK_N = 256
+MOUTH_N = 128
 MAX_INK = 10
 MAX_MOUTH = 4
 MAX_HOLES = 6
+MAX_INK_HOLES = 6  # body outline can enclose several interior loops
 
-SEGMENTS = {
-    "intro": (1, 144),
-    "wave": (145, 288),
-    "sit": (289, 361),
-    "full": (1, 361),
-}
+if os.environ.get("LOCKUP_SEGMENTS"):
+    _raw = json.loads(os.environ["LOCKUP_SEGMENTS"])
+    SEGMENTS = {k: (int(v[0]), int(v[1])) for k, v in _raw.items()}
+else:
+    # 169 frames @ 24fps (~7.04s): idle → thumbs-up → idle  (job thumbs_5829 defaults)
+    SEGMENTS = {
+        "idle": (1, 56),
+        "thumbs": (57, 140),
+        "full": (1, 169),
+    }
 
 CREAM_RGB = [251, 244, 236]
 INK_RGB = [5, 5, 5]
@@ -89,12 +99,13 @@ def classify(rgba: np.ndarray):
 
 def resample_closed(pts: np.ndarray, n: int) -> np.ndarray:
     if len(pts) < 3:
-        out = np.zeros((n, 2), dtype=np.float64)
-        out[:, 0] = W / 2
-        out[:, 1] = H / 2
-        return out
+        return np.full((n, 2), -10.0, dtype=np.float64)
+    # Canonical start (top-most, then left) + CCW winding for first sample only;
+    # temporal align_to_prev() re-phases later frames.
     i0 = int(np.lexsort((pts[:, 0], pts[:, 1]))[0])
     pts = np.vstack([pts[i0:], pts[:i0]])
+    if _shoelace(pts) < 0:
+        pts = pts[::-1]
     closed = np.vstack([pts, pts[0]])
     d = np.sqrt(((closed[1:] - closed[:-1]) ** 2).sum(axis=1))
     s = np.concatenate([[0], np.cumsum(d)])
@@ -113,21 +124,89 @@ def resample_closed(pts: np.ndarray, n: int) -> np.ndarray:
     return out
 
 
-def contour_pts(cnt, n: int) -> np.ndarray | None:
-    if cnt is None or cv2.contourArea(cnt) < MIN_AREA:
+def _shoelace(pts: np.ndarray) -> float:
+    x, y = pts[:, 0], pts[:, 1]
+    return float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y) * 0.5)
+
+
+def align_to_prev(prev: np.ndarray | None, curr: np.ndarray, max_mean: float = 55.0) -> np.ndarray:
+    """Cyclic-shift (+ optional reverse) so vertex i tracks the same feature."""
+    if prev is None or len(prev) != len(curr):
+        return curr
+    n = len(curr)
+    best, best_cost = curr, 1e99
+    for rev in (False, True):
+        base = curr[::-1] if rev else curr
+        for s in range(n):
+            rolled = np.roll(base, s, axis=0)
+            cost = float(np.linalg.norm(rolled - prev, axis=1).mean())
+            if cost < best_cost:
+                best_cost = cost
+                best = rolled
+    # Refuse align when correspondence is nonsense (wrong slot match)
+    if best_cost > max_mean:
+        return curr
+    return best
+
+
+def _centroid(pts: np.ndarray) -> np.ndarray:
+    return pts.mean(axis=0)
+
+
+def _match_indices(
+    prev_cents: list[np.ndarray | None],
+    curr_cents: list[np.ndarray],
+    max_dist: float,
+    prev_areas: list[float | None] | None = None,
+    curr_areas: list[float] | None = None,
+) -> list[int | None]:
+    """Greedy match by centroid (+ area) so big outlines don't steal tiny creases."""
+    used = set()
+    out: list[int | None] = [None] * len(prev_cents)
+    pairs = []
+    for pi, pc in enumerate(prev_cents):
+        if pc is None:
+            continue
+        pa = (prev_areas[pi] if prev_areas else None) or 1.0
+        for ci, cc in enumerate(curr_cents):
+            dist = float(np.linalg.norm(pc - cc))
+            ca = (curr_areas[ci] if curr_areas else None) or 1.0
+            area_pen = abs(np.log(max(pa, 1.0)) - np.log(max(ca, 1.0))) * 50.0
+            pairs.append((dist + area_pen, dist, area_pen, pi, ci))
+    pairs.sort()
+    for _score, dist, area_pen, pi, ci in pairs:
+        if out[pi] is not None or ci in used:
+            continue
+        if dist > max_dist or area_pen > 90.0:
+            continue
+        out[pi] = ci
+        used.add(ci)
+    return out
+
+
+def contour_pts(cnt, n: int, min_area: float | None = None) -> np.ndarray | None:
+    floor = MIN_AREA if min_area is None else min_area
+    if cnt is None or cv2.contourArea(cnt) < floor:
         return None
-    # Light simplify then resample to fixed n (player-safe)
     peri = cv2.arcLength(cnt, True)
-    approx = cv2.approxPolyDP(cnt, max(0.4, 0.0005 * peri), True)
+    approx = cv2.approxPolyDP(cnt, max(0.2, 0.0002 * peri), True)
     pts = approx.reshape(-1, 2).astype(np.float64)
     if len(pts) < 3:
         pts = cnt.reshape(-1, 2).astype(np.float64)
     return resample_closed(pts, n)
 
 
-def ccomp_shapes(mask: np.ndarray, outer_n: int, hole_n: int, max_shapes: int) -> list[dict]:
+def ccomp_shapes(
+    mask: np.ndarray,
+    outer_n: int,
+    hole_n: int,
+    max_shapes: int,
+    max_holes: int | None = None,
+    min_area: float | None = None,
+) -> list[dict]:
+    hole_cap = MAX_HOLES if max_holes is None else max_holes
+    area_floor = MIN_AREA if min_area is None else min_area
     u8 = mask.astype(np.uint8) * 255
-    # Bridge hairline gaps (neck crease must not split cream — cream is solid underlay)
     u8 = cv2.morphologyEx(u8, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     cnts, hier = cv2.findContours(u8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     if not cnts or hier is None:
@@ -138,49 +217,78 @@ def ccomp_shapes(mask: np.ndarray, outer_n: int, hole_n: int, max_shapes: int) -
         if hier[i][3] != -1:
             continue
         area = cv2.contourArea(c)
-        if area < MIN_AREA:
+        if area < area_floor:
             continue
         roots.append((area, i, c))
     roots.sort(reverse=True)
     shapes = []
     for area, i, c in roots[:max_shapes]:
-        outer = contour_pts(c, outer_n)
+        outer = contour_pts(c, outer_n, min_area=area_floor)
         if outer is None:
             continue
         holes = []
         child = hier[i][2]
-        while child != -1 and len(holes) < MAX_HOLES:
-            hp = contour_pts(cnts[child], hole_n)
+        while child != -1 and len(holes) < hole_cap:
+            hp = contour_pts(cnts[child], hole_n, min_area=area_floor)
             if hp is not None:
                 holes.append(hp)
             child = hier[child][0]
-        shapes.append({"outer": outer, "holes": holes, "area": area})
+        shapes.append({"outer": outer, "holes": holes, "area": float(area)})
     return shapes
 
 
 def pts_to_path(pts: np.ndarray) -> dict:
-    v = [[float(round(x, 2)), float(round(y, 2))] for x, y in pts]
+    # 0.1px grid @ 960 — visually lossless, helps identical-frame sparsify
+    v = [[float(round(x, 1)), float(round(y, 1))] for x, y in pts]
     z = [[0, 0]] * len(v)
     return {"i": z, "o": [h[:] for h in z], "v": v, "c": True}
 
 
+def empty_pts(n: int) -> np.ndarray:
+    """Collapsed path outside the artboard — zero area, no even-odd punch."""
+    return np.full((n, 2), -10.0, dtype=np.float64)
+
+
 def empty_path(n: int) -> dict:
-    pts = np.zeros((n, 2))
-    pts[:, 0] = W / 2
-    pts[:, 1] = H / 2
-    return pts_to_path(pts)
+    return pts_to_path(empty_pts(n))
 
 
-def path_hold_keys(paths: list[dict]) -> dict:
+def path_hold_keys(paths: list[dict], eps: float = 0.5) -> dict:
+    """Hold keys only when path moves > eps px — drops contour jitter, same look."""
     if len(paths) == 1:
         return {"a": 0, "k": paths[0]}
-    return {"a": 1, "k": [{"t": i, "s": [p], "h": 1} for i, p in enumerate(paths)]}
+
+    def close(a: dict, b: dict) -> bool:
+        va, vb = a["v"], b["v"]
+        if len(va) != len(vb):
+            return False
+        for (x0, y0), (x1, y1) in zip(va, vb):
+            if abs(x0 - x1) > eps or abs(y0 - y1) > eps:
+                return False
+        return True
+
+    if all(close(p, paths[0]) for p in paths):
+        return {"a": 0, "k": paths[0]}
+    keys = []
+    prev = None
+    for i, p in enumerate(paths):
+        if prev is None or not close(p, prev):
+            keys.append({"t": i, "s": [p], "h": 1})
+            prev = p
+    return {"a": 1, "k": keys}
+
 
 
 def opacity_keys(values: list[int]) -> dict:
     if all(v == values[0] for v in values):
         return {"a": 0, "k": values[0]}
-    return {"a": 1, "k": [{"t": i, "s": [v], "h": 1} for i, v in enumerate(values)]}
+    keys = []
+    prev = None
+    for i, v in enumerate(values):
+        if prev is None or v != prev:
+            keys.append({"t": i, "s": [v], "h": 1})
+            prev = v
+    return {"a": 1, "k": keys}
 
 
 def solid_fill(rgb, even_odd: bool = True) -> dict:
@@ -205,15 +313,48 @@ def tr(opacity=None) -> dict:
     }
 
 
+def enrich_ink(ink: np.ndarray, rgba: np.ndarray, mouth: np.ndarray) -> np.ndarray:
+    """Pull in antialias fringe around hard ink so outlines match the plate."""
+    rgb = rgba[:, :, :3].astype(np.float32)
+    a = rgba[:, :, 3] > 100
+    lum = rgb.mean(axis=2)
+    near = cv2.dilate(ink.astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))) > 0
+    soft = ink | (a & near & (lum < 120) & ~mouth)
+    soft = cv2.morphologyEx(soft.astype(np.uint8) * 255, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
+    return soft
+
+
+def prepare_mouth(mouth: np.ndarray) -> np.ndarray:
+    """Grow speck openings only (<40px) so they contour; leave normal mouths alone."""
+    if not mouth.any():
+        return mouth
+    area = int(mouth.sum())
+    if area >= 40:
+        return (
+            cv2.morphologyEx(mouth.astype(np.uint8) * 255, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
+        )
+    m = cv2.dilate(mouth.astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    return m > 0
+
+
 def extract_frame(rgba: np.ndarray) -> dict:
     cream, ink, cavity, tongue, hole = classify(rgba)
     mouth = cavity | tongue
+    mouth = prepare_mouth(mouth)
     if mouth.any():
-        mouth = cv2.morphologyEx(mouth.astype(np.uint8) * 255, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
-        tongue = tongue & mouth
+        # re-split tongue after grow
+        rgb = rgba[:, :, :3].astype(np.float32)
+        lum = rgb.mean(axis=2)
+        tongue = mouth & (lum >= 110)
+        cavity = mouth & ~tongue
+    else:
+        cavity = mouth
+        tongue = mouth
+
+    ink = enrich_ink(ink, rgba, mouth)
 
     # Cream underlay: EXTERNAL silhouette only + explicit shackle hole(s).
-    # Never take CCOMP holes from cream (those punched mouth/eyes → transparent).
     u8 = cream.astype(np.uint8) * 255
     u8 = cv2.morphologyEx(u8, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     cnts, _ = cv2.findContours(u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -224,15 +365,15 @@ def extract_frame(rgba: np.ndarray) -> dict:
         if outer is not None:
             holes = []
             if hole.any():
-                for hs in ccomp_shapes(hole, HOLE_N, HOLE_N, max_shapes=2):
+                for hs in ccomp_shapes(hole, HOLE_N, HOLE_N, max_shapes=2, max_holes=1):
                     holes.append(hs["outer"])
             cream_shapes.append({"outer": outer, "holes": holes, "area": float(cv2.contourArea(c))})
 
     return {
         "cream": cream_shapes,
-        "ink": ccomp_shapes(ink, INK_N, HOLE_N, MAX_INK),
-        "cavity": ccomp_shapes(mouth, MOUTH_N, MOUTH_N // 2, MAX_MOUTH),
-        "tongue": ccomp_shapes(tongue, MOUTH_N, MOUTH_N // 2, MAX_MOUTH),
+        "ink": ccomp_shapes(ink, INK_N, HOLE_N, MAX_INK, max_holes=MAX_INK_HOLES),
+        "cavity": ccomp_shapes(cavity, MOUTH_N, MOUTH_N // 2, MAX_MOUTH, max_holes=1, min_area=4),
+        "tongue": ccomp_shapes(tongue, MOUTH_N, MOUTH_N // 2, MAX_MOUTH, max_holes=1, min_area=4),
     }
 
 
@@ -255,38 +396,122 @@ def rasterize_classify(cream, ink, cavity, tongue) -> np.ndarray:
     return out
 
 
-def slots_from_frames(frames: list[dict], kind: str, max_shapes: int, outer_n: int, hole_n: int):
+def slots_from_frames(
+    frames: list[dict],
+    kind: str,
+    max_shapes: int,
+    outer_n: int,
+    hole_n: int,
+    hole_cap: int | None = None,
+):
+    """Build temporally stable shape slots: centroid+area track + path phase-align."""
+    cap = MAX_HOLES if hole_cap is None else hole_cap
     max_holes = 0
     for fd in frames:
         for sh in fd[kind][:max_shapes]:
             max_holes = max(max_holes, len(sh["holes"]))
-    max_holes = min(max_holes, MAX_HOLES)
+    max_holes = min(max_holes, cap)
+
+    outers: list[list[dict]] = [[] for _ in range(max_shapes)]
+    opacities: list[list[int]] = [[] for _ in range(max_shapes)]
+    holes_buf: list[list[list[dict]]] = [[[] for _ in range(max_holes)] for _ in range(max_shapes)]
+    slot_used = [False] * max_shapes
+
+    prev_outer: list[np.ndarray | None] = [None] * max_shapes
+    prev_cent: list[np.ndarray | None] = [None] * max_shapes
+    prev_area: list[float | None] = [None] * max_shapes
+    prev_holes: list[list[np.ndarray | None]] = [[None] * max_holes for _ in range(max_shapes)]
+    prev_hole_cent: list[list[np.ndarray | None]] = [[None] * max_holes for _ in range(max_shapes)]
+
+    match_r = 0.35 * min(W, H)
+
+    for fd in frames:
+        shapes = list(fd[kind][:max_shapes])
+        cents = [_centroid(sh["outer"]) for sh in shapes]
+        areas = [float(sh.get("area") or 1.0) for sh in shapes]
+        assign = _match_indices(prev_cent, cents, match_r, prev_area, areas)
+
+        slot_to_shape: list[int | None] = [None] * max_shapes
+        taken_shapes = set()
+        for si, ci in enumerate(assign):
+            if ci is not None:
+                slot_to_shape[si] = ci
+                taken_shapes.add(ci)
+
+        free_slots = [i for i in range(max_shapes) if slot_to_shape[i] is None]
+        for ci, sh in enumerate(shapes):
+            if ci in taken_shapes:
+                continue
+            if not free_slots:
+                break
+            slot_to_shape[free_slots.pop(0)] = ci
+
+        for si in range(max_shapes):
+            ci = slot_to_shape[si]
+            if ci is None:
+                if prev_outer[si] is not None:
+                    outers[si].append(pts_to_path(prev_outer[si]))
+                else:
+                    outers[si].append(empty_path(outer_n))
+                opacities[si].append(0)
+                for hi in range(max_holes):
+                    if prev_holes[si][hi] is not None:
+                        holes_buf[si][hi].append(pts_to_path(prev_holes[si][hi]))
+                    else:
+                        holes_buf[si][hi].append(empty_path(hole_n))
+                continue
+
+            sh = shapes[ci]
+            outer = resample_closed(sh["outer"], outer_n)
+            outer = align_to_prev(prev_outer[si], outer)
+            outers[si].append(pts_to_path(outer))
+            opacities[si].append(100)
+            slot_used[si] = True
+            prev_outer[si] = outer
+            prev_cent[si] = _centroid(outer)
+            prev_area[si] = float(sh.get("area") or 1.0)
+
+            h_pts = [resample_closed(h, hole_n) for h in sh["holes"][:max_holes]]
+            h_cents = [_centroid(h) for h in h_pts]
+            h_areas = [float(max(1.0, abs(_shoelace(h)))) for h in h_pts]
+            h_assign = _match_indices(prev_hole_cent[si], h_cents, match_r, None, h_areas)
+            hole_to: list[int | None] = [None] * max_holes
+            taken_h = set()
+            for hi, hj in enumerate(h_assign):
+                if hj is not None:
+                    hole_to[hi] = hj
+                    taken_h.add(hj)
+            free_h = [i for i in range(max_holes) if hole_to[i] is None]
+            for hj in range(len(h_pts)):
+                if hj in taken_h:
+                    continue
+                if not free_h:
+                    break
+                hole_to[free_h.pop(0)] = hj
+
+            for hi in range(max_holes):
+                hj = hole_to[hi]
+                if hj is None:
+                    pts = empty_pts(hole_n)
+                    holes_buf[si][hi].append(pts_to_path(pts))
+                    prev_holes[si][hi] = pts
+                else:
+                    hp = align_to_prev(prev_holes[si][hi], h_pts[hj])
+                    holes_buf[si][hi].append(pts_to_path(hp))
+                    prev_holes[si][hi] = hp
+                    prev_hole_cent[si][hi] = _centroid(hp)
 
     slots = []
-    for s in range(max_shapes):
-        outer, opacity = [], []
-        holes = [[] for _ in range(max_holes)]
-        any_on = False
-        for fd in frames:
-            shapes = fd[kind]
-            if s < len(shapes):
-                sh = shapes[s]
-                # enforce fixed counts
-                outer.append(pts_to_path(resample_closed(sh["outer"], outer_n)))
-                opacity.append(100)
-                any_on = True
-                for hi in range(max_holes):
-                    if hi < len(sh["holes"]):
-                        holes[hi].append(pts_to_path(resample_closed(sh["holes"][hi], hole_n)))
-                    else:
-                        holes[hi].append(empty_path(hole_n))
-            else:
-                outer.append(empty_path(outer_n))
-                opacity.append(0)
-                for hi in range(max_holes):
-                    holes[hi].append(empty_path(hole_n))
-        if any_on:
-            slots.append({"outer": outer, "holes": holes, "opacity": opacity})
+    for si in range(max_shapes):
+        if not slot_used[si]:
+            continue
+        slots.append(
+            {
+                "outer": outers[si],
+                "holes": holes_buf[si],
+                "opacity": opacities[si],
+            }
+        )
     return slots
 
 
@@ -333,10 +558,10 @@ def build_segment(seg_id: str, start: int, end: int) -> dict:
         if (n - start) % 40 == 0:
             print(f"  … {n}")
 
-    cream = slots_from_frames(frames, "cream", 2, CREAM_N, HOLE_N)
-    ink = slots_from_frames(frames, "ink", MAX_INK, INK_N, HOLE_N)
-    cavity = slots_from_frames(frames, "cavity", MAX_MOUTH, MOUTH_N, MOUTH_N // 2)
-    tongue = slots_from_frames(frames, "tongue", MAX_MOUTH, MOUTH_N, MOUTH_N // 2)
+    cream = slots_from_frames(frames, "cream", 2, CREAM_N, HOLE_N, hole_cap=2)
+    ink = slots_from_frames(frames, "ink", MAX_INK, INK_N, HOLE_N, hole_cap=MAX_INK_HOLES)
+    cavity = slots_from_frames(frames, "cavity", MAX_MOUTH, MOUTH_N, MOUTH_N // 2, hole_cap=1)
+    tongue = slots_from_frames(frames, "tongue", MAX_MOUTH, MOUTH_N, MOUTH_N // 2, hole_cap=1)
 
     ip, op = 0, end - start + 1
     layers = [
@@ -379,29 +604,61 @@ def write_qc_pair(seg_id: str, mid: int):
 
 
 def main():
+    import gzip
+    import zipfile
+
     EXPORT.mkdir(parents=True, exist_ok=True)
     QC.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Mascot Lottie exports",
         "",
         "Player-safe 1:1: solid cream underlay (shackle hole only) + mouth + ink.",
-        "Fixed vertex counts per slot; held keys @ 24fps.",
+        "Fixed vertex counts; hold keys sparsified (±0.5px) @ source fps.",
+        "Paths phase-aligned + centroid-tracked across frames (reduces flicker).",
+        "Also writes `.json.gz` and `.lottie` (zipped) — same pixels, smaller download.",
         "",
-        "| File | Frames |",
-        "|------|--------|",
+        "| File | Frames | JSON | gzip |",
+        "|------|--------|------|------|",
     ]
     for seg_id, (a, b) in SEGMENTS.items():
         data = build_segment(seg_id, a, b)
-        if seg_id == "full":
-            data["markers"] = [
-                {"tm": 0, "cm": "intro", "dr": 144},
-                {"tm": 144, "cm": "wave", "dr": 144},
-                {"tm": 288, "cm": "sit", "dr": 73},
-            ]
+        if seg_id == "full" and len(SEGMENTS) > 1:
+            markers = []
+            t = 0
+            for mid, (aa, bb) in SEGMENTS.items():
+                if mid == "full":
+                    continue
+                dr = bb - aa + 1
+                markers.append({"tm": t, "cm": mid, "dr": dr})
+                t += dr
+            data["markers"] = markers
+        raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
         out = EXPORT / f"mascot_{seg_id}.json"
-        out.write_text(json.dumps(data, separators=(",", ":")))
-        print(f"wrote {out.name} ({out.stat().st_size/1024:.0f} KB)")
-        lines.append(f"| `{out.name}` | {a}–{b} |")
+        out.write_bytes(raw)
+        gz = EXPORT / f"mascot_{seg_id}.json.gz"
+        with gzip.open(gz, "wb", compresslevel=9) as f:
+            f.write(raw)
+        lot = EXPORT / f"mascot_{seg_id}.lottie"
+        with zipfile.ZipFile(lot, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            z.writestr(
+                "manifest.json",
+                json.dumps(
+                    {
+                        "version": "1",
+                        "generator": "digital-palette-lockup",
+                        "animations": [{"id": "main", "speed": 1}],
+                    },
+                    separators=(",", ":"),
+                ),
+            )
+            z.writestr("animations/main.json", raw)
+        print(
+            f"wrote {out.name} ({out.stat().st_size/1024:.0f} KB)  "
+            f"gz={gz.stat().st_size/1024:.0f} KB  lottie={lot.stat().st_size/1024:.0f} KB"
+        )
+        lines.append(
+            f"| `mascot_{seg_id}.*` | {a}–{b} | {out.stat().st_size/1024:.0f} KB | {gz.stat().st_size/1024:.0f} KB |"
+        )
         write_qc_pair(seg_id, (a + b) // 2)
     (EXPORT / "README.md").write_text("\n".join(lines) + "\n")
 

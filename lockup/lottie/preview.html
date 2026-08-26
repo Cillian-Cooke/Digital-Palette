@@ -36,10 +36,16 @@
     <h1>Mascot Lottie</h1>
     <label>Clip
       <select id="clip">
-        <option value="export/mascot_intro.json">intro</option>
-        <option value="export/mascot_wave.json" selected>wave</option>
-        <option value="export/mascot_sit.json">sit</option>
-        <option value="export/mascot_full.json">full</option>
+        <optgroup label="thumbs_5829 (light plate)">
+          <option value="export/thumbs_5829/mascot_full.json" selected>full</option>
+          <option value="export/thumbs_5829/mascot_idle.json">idle</option>
+          <option value="export/thumbs_5829/mascot_thumbs.json">thumbs-up</option>
+        </optgroup>
+        <optgroup label="clip_5896 (black plate)">
+          <option value="export/clip_5896/mascot_full.json">full</option>
+          <option value="export/clip_5896/mascot_idle.json">idle</option>
+          <option value="export/clip_5896/mascot_thumbs.json">thumbs-up</option>
+        </optgroup>
       </select>
     </label>
     <button type="button" id="play">Play</button>
